@@ -1,0 +1,14 @@
+{
+  "source": "Cascade/datasets/public/twitter_hate/ground_truth.json",
+  "documents_source": "Cascade/datasets/public/twitter_hate/documents.json",
+  "queries_source": "Cascade/datasets/public/twitter_hate/queries.json",
+  "filter": "query_id == 1",
+  "num_rows": 24783,
+  "label_counts": {
+    "0": 4163,
+    "1": 20620
+  },
+  "overlength_removed_max2048": 0,
+  "overlength_removed_manifest": "outputs/runs/overlength_removed_records_max2048.jsonl",
+  "note": "Local extracted dataset used by default; runtime scripts no longer default to Cascade."
+}

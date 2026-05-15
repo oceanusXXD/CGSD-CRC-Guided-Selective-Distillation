@@ -1,0 +1,14 @@
+{
+  "source": "Cascade/datasets/public/codebase/ground_truth.json",
+  "documents_source": "Cascade/datasets/public/codebase/documents.json",
+  "queries_source": "Cascade/datasets/public/codebase/queries.json",
+  "filter": "query_id == 2",
+  "num_rows": 9297,
+  "label_counts": {
+    "0": 3538,
+    "1": 5759
+  },
+  "overlength_removed_max2048": 1,
+  "overlength_removed_manifest": "outputs/runs/overlength_removed_records_max2048.jsonl",
+  "note": "Local extracted dataset used by default; runtime scripts no longer default to Cascade."
+}

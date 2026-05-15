@@ -1,0 +1,45 @@
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local env files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# OMX/local agent runtime state
+.omx/
+
+# Generated training/evaluation artifacts
+outputs/
+runs/
+logs/
+wandb/
+
+# Local model weights and large ML artifacts
+model/
+models/
+checkpoints/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+
+# Generated experiment inputs that may be large or API-derived
+datasets/*.embeddings.jsonl
+datasets/*.embeddings.json
+datasets/*.embeddings.npz
+datasets/*.teacher.jsonl
+datasets/*.teacher.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
