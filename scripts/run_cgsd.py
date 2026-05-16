@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.cgsd_cli_common import apply_teacher_label, binary_to_int
+from scripts.cgsd_cli_common import apply_teacher_label, binary_to_int, read_jsonl
 from src.data import (
     GenerationPairCollator,
     GenerationQueryDocumentDataset,
@@ -39,6 +39,57 @@ from src.utils import (
 )
 
 
+def _embedding_ids_from_sidecar(path: Path, row_count: int) -> list[str]:
+    """从本地 CGSD sidecar 文件恢复 .npy embedding 的样本顺序。"""
+    candidates: list[Path] = []
+    meta_path = path.with_suffix(".meta.json")
+    if meta_path.exists():
+        meta = read_json(meta_path)
+        source_file = meta.get("source_selected_chunks_file")
+        if source_file:
+            source_path = Path(str(source_file))
+            if not source_path.is_absolute():
+                candidates.append(path.parent / source_path.name)
+                candidates.append(PROJECT_ROOT.parent / source_path)
+            else:
+                candidates.append(source_path)
+    candidates.extend(
+        [
+            path.with_suffix(".ids.jsonl"),
+            path.with_suffix(".ids.json"),
+            path.parent / "evidence_rows.jsonl",
+            path.parent / "selected_chunks.jsonl",
+            path.parent / "embedding_rows.jsonl",
+        ]
+    )
+
+    seen_candidates: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve() if candidate.exists() else candidate
+        if candidate in seen_candidates or not candidate.exists():
+            continue
+        seen_candidates.add(candidate)
+        if candidate.suffix == ".jsonl":
+            rows = read_jsonl(candidate)
+            ids = [
+                str(row.get("id", row.get("sample_id", row.get("review_id", row.get("document_id", "")))))
+                for row in rows
+            ]
+        else:
+            payload = read_json(candidate)
+            raw_ids = payload.get("ids", payload.get("embedding_ids", payload)) if isinstance(payload, dict) else payload
+            ids = [str(item.get("id", item.get("sample_id", "")) if isinstance(item, dict) else item) for item in raw_ids]
+        ids = [sample_id for sample_id in ids if sample_id]
+        if len(ids) == int(row_count):
+            if len(set(ids)) != len(ids):
+                raise ValueError(f"{candidate} contains duplicate embedding ids")
+            return ids
+    raise ValueError(
+        f"{path} is a .npy embedding matrix with {row_count} rows, but no matching id sidecar was found. "
+        "Expected evidence_rows.jsonl, selected_chunks.jsonl, *.ids.jsonl, or meta source_selected_chunks_file."
+    )
+
+
 def load_embeddings(path: Path) -> dict[str, np.ndarray]:
     """读取真实预计算 pair embedding。
 
@@ -46,6 +97,15 @@ def load_embeddings(path: Path) -> dict[str, np.ndarray]:
     k-Center 始终运行在文档要求的固定 query-aware embedding 空间，
     不会退化成哈希、随机或其他启发式占位向量。
     """
+    if path.suffix == ".npy":
+        matrix = np.load(path, allow_pickle=False)
+        if matrix.ndim != 2:
+            raise ValueError(f"{path} must contain a 2D embedding matrix, got shape {matrix.shape}")
+        ids = _embedding_ids_from_sidecar(path, int(matrix.shape[0]))
+        return {
+            sample_id: np.asarray(matrix[index], dtype=np.float32)
+            for index, sample_id in enumerate(ids)
+        }
     if path.suffix == ".npz":
         payload = np.load(path, allow_pickle=False)
         return {str(key): np.asarray(payload[key], dtype=np.float32) for key in payload.files}
@@ -265,6 +325,7 @@ def train_round_model(
     eval_examples: list[PairExample],
     tokenizer: Any,
     model_path: Path,
+    init_adapter_path: Path | None = None,
     output_dir: Path,
     device: Any,
     args: Any,
@@ -297,6 +358,8 @@ def train_round_model(
         lora_dropout=args.lora_dropout,
         lora_target_modules=args.lora_target_modules,
         lora_layer_scope=args.lora_layer_scope,
+        adapter_path=init_adapter_path,
+        adapters_trainable=True,
         torch_dtype=parse_torch_dtype(args.torch_dtype),
         trust_remote_code=args.trust_remote_code,
     )

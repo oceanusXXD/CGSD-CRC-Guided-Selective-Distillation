@@ -137,7 +137,7 @@ def load_examples(
                 except KeyError as exc:
                     raise KeyError(f"{file_path}:{line_number} missing field {exc}") from exc
 
-                sample_id = str(row.get("id", f"{file_path.stem}:{line_number}"))
+                sample_id = str(row.get("id", row.get("sample_id", f"{file_path.stem}:{line_number}")))
                 source_location = f"{file_path}:{line_number}"
                 if sample_id in seen_ids:
                     raise ValueError(

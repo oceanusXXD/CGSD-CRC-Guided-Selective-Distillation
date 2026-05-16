@@ -40,6 +40,7 @@ from src.utils import (
     ensure_tokenizer_padding,
     get_device,
     parse_torch_dtype,
+    read_json,
     write_json,
     write_jsonl,
 )
@@ -62,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher_temperature", type=float, default=1.0)
     parser.add_argument("--all_predictions_path", default=None)
     parser.add_argument("--calibration_predictions_path", default=None)
+    parser.add_argument("--final_calibration_predictions_path", default=None)
     parser.add_argument("--pool_predictions_path", default=None)
     parser.add_argument("--train_label_snapshot_path", default=None)
     parser.add_argument("--usage_path", default=None)
@@ -94,9 +96,13 @@ def main() -> None:
         args.pool_predictions_path,
         round_dir / "pool_student_predictions.jsonl",
     )
+    final_calibration_predictions_path = output_artifact_path(
+        args.final_calibration_predictions_path,
+        round_dir / "final_calibration_student_predictions.jsonl",
+    )
     train_label_snapshot_path = output_artifact_path(
         args.train_label_snapshot_path,
-        round_dir / "train_label_snapshot.json",
+        round_dir / "predict_train_label_snapshot.json",
     )
     usage_path = output_artifact_path(args.usage_path, round_dir / "predict_usage.json")
     if args.show_result:
@@ -107,6 +113,7 @@ def main() -> None:
         required_outputs=[
             all_predictions_path,
             calibration_predictions_path,
+            final_calibration_predictions_path,
             pool_predictions_path,
             train_label_snapshot_path,
             usage_path,
@@ -163,7 +170,10 @@ def main() -> None:
         label_field=args.label_field,
     )
     calibration_examples, pool_examples = split_examples(examples, split_payload)
-    prediction_examples = calibration_examples + pool_examples
+    examples_by_id = {str(example.sample_id): example for example in examples}
+    final_calibration_ids = [str(sample_id) for sample_id in split_payload.get("final_calibration_ids", [])]
+    final_calibration_examples = [examples_by_id[sample_id] for sample_id in final_calibration_ids]
+    prediction_examples = calibration_examples + final_calibration_examples + pool_examples
     teacher_labels_by_id = (
         load_teacher_labels(
             args.teacher_labels_path,
@@ -191,8 +201,10 @@ def main() -> None:
     )
     by_id = {str(row["id"]): row for row in predictions}
     calibration_predictions = [by_id[str(sample_id)] for sample_id in split_payload["calibration_ids"]]
+    final_calibration_predictions = [by_id[str(sample_id)] for sample_id in final_calibration_ids]
     pool_predictions = [by_id[str(sample_id)] for sample_id in split_payload["pool_ids"]]
     write_jsonl(calibration_predictions, calibration_predictions_path)
+    write_jsonl(final_calibration_predictions, final_calibration_predictions_path)
     write_jsonl(pool_predictions, pool_predictions_path)
     teacher_usage = summarize_teacher_label_usage(predictions, purpose="predict_teacher_label_attachment")
     write_stage_usage(
@@ -210,6 +222,7 @@ def main() -> None:
             "teacher_api_file_calls": teacher_usage["teacher_api_file_calls"],
             "all_predictions_path": str(all_predictions_path),
             "calibration_predictions_path": str(calibration_predictions_path),
+            "final_calibration_predictions_path": str(final_calibration_predictions_path),
             "pool_predictions_path": str(pool_predictions_path),
         },
     )

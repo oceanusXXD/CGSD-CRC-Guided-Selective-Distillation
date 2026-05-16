@@ -1,6 +1,6 @@
 # 实验 6：CRC 保证验证
 
-当前代码可以跑多 seed、多 alpha 的 CRC 验证；需要额外聚合脚本把 20 次 `round_summary.json` 汇总成均值和违反率。
+当前代码可以跑多 seed、多 alpha 的 CRC 验证，并可用 `experiments/bin/cgsd_collect_results.py` 汇总均值和违反率。
 
 ## 数据前置
 
@@ -47,9 +47,16 @@ python scripts/cgsd_calibrate.py \
 对 `SEED=1..20` 重复上面的命令，并把输出目录设为：
 
 ```text
-outputs/cgsd_exp6_alpha007_seed01
-outputs/cgsd_exp6_alpha007_seed02
+experiments/runs/<dataset>/exp6_alpha007_seed01
+experiments/runs/<dataset>/exp6_alpha007_seed02
 ...
+```
+
+只跑 zero-shot CRC 时可用：
+
+```bash
+SEED=1 RUN_NAME=exp6_alpha007_seed01 ALPHA=0.07 experiments/bin/cgsd_round0_eval.sh
+SEED=2 RUN_NAME=exp6_alpha007_seed02 ALPHA=0.07 experiments/bin/cgsd_round0_eval.sh
 ```
 
 ## 多 alpha 执行
@@ -58,6 +65,15 @@ outputs/cgsd_exp6_alpha007_seed02
 
 ```text
 0.03, 0.05, 0.07, 0.09, 0.12
+```
+
+## 汇总
+
+```bash
+experiments/bin/cgsd_collect_results.py \
+  --runs 'experiments/runs/lrobench/exp6_alpha*_seed*' \
+  --output_csv experiments/runs/lrobench/exp6_crc_runs.csv \
+  --crc_summary_csv experiments/runs/lrobench/exp6_crc_summary.csv
 ```
 
 ## 需要记录

@@ -29,7 +29,7 @@ from scripts.cgsd_cli_common import (
     summarize_teacher_label_usage,
     write_stage_usage,
 )
-from algorithms.cgsd import select_dbds_samples, teacher_weight
+from algorithms.cgsd import DEFAULT_BAND_RATIOS, select_dbds_samples, teacher_weight
 from scripts.run_cgsd import assert_embedding_coverage, load_embeddings
 from src.utils import read_json, write_json, write_jsonl
 
@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--budget", type=int, default=None)
     parser.add_argument("--budget_schedule", default="250,150,100")
     parser.add_argument("--delta", type=float, default=0.1)
+    parser.add_argument("--band_ratios", default=None, help="DBDS B/M/F ratios, e.g. 0.6,0.3,0.1 or B=1,M=0,F=0")
     parser.add_argument("--easy_anchor_ratio", type=float, default=None)
     parser.add_argument("--anchor_count", type=int, default=None)
     parser.add_argument("--anchor_ids_path", default=None)
@@ -60,6 +61,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     add_stage_cache_args(parser)
     return parser.parse_args()
+
+
+def parse_band_ratios(value: str | None) -> dict[str, float] | None:
+    """Parse DBDS B/M/F ratios for band-ratio ablations."""
+    if value is None or str(value).strip() == "":
+        return None
+    text = str(value).strip()
+    ratios: dict[str, float]
+    if "=" in text:
+        ratios = {}
+        for part in text.split(","):
+            if not part.strip():
+                continue
+            if "=" not in part:
+                raise ValueError(f"invalid --band_ratios part: {part!r}")
+            key, raw = part.split("=", 1)
+            band = key.strip().upper()
+            if band not in {"B", "M", "F"}:
+                raise ValueError("--band_ratios keys must be B, M, and F")
+            ratios[band] = float(raw.strip())
+        if set(ratios) != {"B", "M", "F"}:
+            raise ValueError("--band_ratios must define B, M, and F")
+    else:
+        parts = [float(part.strip()) for part in text.split(",") if part.strip()]
+        if len(parts) != 3:
+            raise ValueError("--band_ratios must contain three values: B,M,F")
+        ratios = {"B": parts[0], "M": parts[1], "F": parts[2]}
+    if any(value < 0.0 for value in ratios.values()):
+        raise ValueError("--band_ratios values must be non-negative")
+    total = sum(ratios.values())
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError("--band_ratios values must sum to 1")
+    return ratios
 
 
 def budget_for_round(*, round_index: int, budget: int | None, budget_schedule: str) -> int:
@@ -142,7 +176,6 @@ def main() -> None:
         stage_name="cgsd_select",
         required_outputs=[
             selected_train_rows_output_path,
-            cumulative_train_rows_output_path,
             anchor_candidate_pool_path,
             selection_summary_path,
             usage_path,
@@ -189,6 +222,7 @@ def main() -> None:
     assert_embedding_coverage(embeddings_by_id, pool_decisions, expected_dim=int(args.embedding_dim))
     defer_ids = [str(row["id"]) for row in pool_decisions if bool(row.get("defer", False))]
     cached_anchor_set = set(anchor_candidate_ids) if anchor_candidate_ids is not None else None
+    effective_band_ratios = parse_band_ratios(args.band_ratios) or dict(DEFAULT_BAND_RATIOS)
     write_jsonl(
         anchor_candidate_rows(
             pool_decisions,
@@ -206,6 +240,7 @@ def main() -> None:
         lambda_hat=float(round_summary["lambda_hat"]),
         embeddings_by_id=embeddings_by_id,
         delta=float(args.delta),
+        band_ratios=effective_band_ratios,
         easy_anchor_ratio=easy_anchor_ratio,
         anchor_count=anchor_count,
         anchor_candidate_ids=anchor_candidate_ids,
@@ -224,6 +259,7 @@ def main() -> None:
     selection_payload = selection.to_dict()
     selection_payload["effective_anchor_count_arg"] = anchor_count
     selection_payload["effective_easy_anchor_ratio"] = easy_anchor_ratio
+    selection_payload["effective_band_ratios"] = effective_band_ratios
     selection_payload["anchor_ids_path"] = str(anchor_ids_path) if anchor_ids_path else None
     selection_summary = {
         "stage_name": "cgsd_select",

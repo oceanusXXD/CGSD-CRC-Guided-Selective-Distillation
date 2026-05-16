@@ -5,7 +5,7 @@
 ## 数据前置
 
 1. 准备同一个数据文件、embedding 文件和可选 teacher 文件。
-2. 每个预算 `m` 使用独立输出目录，例如 `outputs/cgsd_exp3_m050_seed1`。
+2. 每个预算 `m` 使用独立 `RUN_NAME`，例如 `exp3_m050_seed1`，输出在 `experiments/runs/<dataset>/<run_name>/`。
 3. `m=0` 不运行 selection 和 train，只记录 zero-shot 的 CRC 结果。
 4. 每个预算点使用相同 `--n_calibration`、`--seed`、`--temperature 15` 和 `--alpha`，否则曲线不可比。
 5. 这里的 `m` 是 DBDS defer 样本预算；默认 easy anchor 会额外加入 `floor(0.1 * m)` 个训练样本。若横轴必须表示总 teacher 训练标签数，运行时加 `--easy_anchor_ratio 0`。
@@ -30,10 +30,11 @@
 ## m=0 的运行方式
 
 ```bash
-python scripts/cgsd_prepare.py --data_path "$DATA" --embeddings_path "$EMB" --output_dir "$OUT" --n_calibration 200 --seed 1
-python scripts/cgsd_predict.py --output_dir "$OUT" --round_index 0 --model_path "$MODEL" --data_path "$DATA" --teacher_labels_path "$TEACHER"
-python scripts/cgsd_calibrate.py --output_dir "$OUT" --round_index 0 --temperature 15 --alpha 0.07
-python scripts/cgsd_finalize.py --output_dir "$OUT" --round_index 0
+export DATASET=lrobench
+export RUN_NAME=exp3_m000_seed1
+export DIM=2560
+experiments/bin/cgsd_round0_eval.sh
+ROUND=0 experiments/bin/cgsd_finalize.sh
 ```
 
 ## m>0 的运行方式
@@ -42,27 +43,23 @@ python scripts/cgsd_finalize.py --output_dir "$OUT" --round_index 0
 2. 用当前预算运行 selection：
 
 ```bash
-python scripts/cgsd_select.py \
-  --output_dir "$OUT" \
-  --round_index 0 \
-  --embeddings_path "$EMB" \
-  --budget "$M"
+RUN_NAME=exp3_m050_seed1 experiments/bin/cgsd_round0_eval.sh
+ROUND=0 BUDGET=50 experiments/bin/cgsd_select_round.sh
 ```
 
 3. 训练 round1 并重校准：
 
 ```bash
-python scripts/cgsd_train_round.py --output_dir "$OUT" --round_index 1 --model_path "$MODEL" --data_path "$DATA"
-python scripts/cgsd_predict.py --output_dir "$OUT" --round_index 1 --model_path "$MODEL" --data_path "$DATA" --checkpoint_dir "$OUT/round_1/model" --teacher_labels_path "$TEACHER"
-python scripts/cgsd_calibrate.py --output_dir "$OUT" --round_index 1 --temperature 15 --alpha 0.07
-python scripts/cgsd_finalize.py --output_dir "$OUT" --round_index 1
+ROUND=1 experiments/bin/cgsd_train_round.sh
+ROUND=1 experiments/bin/cgsd_eval_round.sh
+ROUND=1 experiments/bin/cgsd_finalize.sh
 ```
 
 ## 需要记录
 
 1. `round_1/round_summary.json` 的 `pool_summary.defer_rate` 和 `pool_summary.accept_error_rate`。
 2. `cgsd_summary.json` 的 teacher 调用摘要。
-3. 成本曲线需要额外聚合脚本：`C(m) = (m + n_cal + rho * N) * c_T + N * c_S`。
+3. 成本曲线可用 `experiments/bin/cgsd_collect_results.py` 汇总 CSV，再用外部绘图工具画图。
 4. 严格成本以 `predict_usage.json`、`select_usage.json`、`train_usage.json` 和 `finalize_usage.json` 为准；公式里的 `m` 要加上 easy anchor，实验总成本还要加每轮全量 student 推理。
 5. 每个预算点都要保留 call/token 账本，后续统一聚合：
    - `round_*/predict_usage.json`：student/base 或 LoRA 推理行数、估算 prompt/completion token。
@@ -70,3 +67,11 @@ python scripts/cgsd_finalize.py --output_dir "$OUT" --round_index 1
    - `round_*/select_usage.json`：DBDS 选中行数、embedding 行数/维度、teacher/groundtruth 标签调用数、选中样本估算 token。
    - `round_*/train_usage.json`：训练样本数、训练 step 估算、训练 token 估算、训练标签来源。
    - `finalize_usage.json`：最终 deployment defer 的 teacher/groundtruth 调用数和 defer prompt token。
+
+聚合示例：
+
+```bash
+experiments/bin/cgsd_collect_results.py \
+  --runs 'experiments/runs/lrobench/exp3_m*_seed1' \
+  --output_csv experiments/runs/lrobench/exp3_budget_curve_seed1.csv
+```

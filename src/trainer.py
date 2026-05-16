@@ -145,13 +145,24 @@ def evaluate_model(
         labels.extend(batch_labels)
         scores.extend(batch_scores)
 
-        for sample_id, label, score, probability in zip(sample_ids, batch_labels, batch_scores, probs):
+        batch_no_logits = float_logits[:, 0].detach().cpu().tolist()
+        batch_yes_logits = float_logits[:, 1].detach().cpu().tolist()
+        for sample_id, label, score, probability, no_logit, yes_logit in zip(
+            sample_ids,
+            batch_labels,
+            batch_scores,
+            probs,
+            batch_no_logits,
+            batch_yes_logits,
+        ):
             prediction = 1 if float(score) > threshold else 0
             rows.append(
                 {
                     "id": sample_id,
                     "label": int(label),
                     "score": float(score),
+                    "no_logit": float(no_logit),
+                    "yes_logit": float(yes_logit),
                     "probability": float(probability),
                     "prediction": prediction,
                     # 对外工件统一使用 1/0，避免模型协议里的 yes/no 泄漏到算法输入。
@@ -209,12 +220,23 @@ def predict_model(
             probs = torch.softmax(float_logits, dim=-1)[:, 1].detach().cpu().tolist()
             batch_labels = batch["target_labels"].detach().cpu().int().tolist()
 
-            for sample_id, label, score, probability in zip(sample_ids, batch_labels, batch_scores, probs):
+            batch_no_logits = float_logits[:, 0].detach().cpu().tolist()
+            batch_yes_logits = float_logits[:, 1].detach().cpu().tolist()
+            for sample_id, label, score, probability, no_logit, yes_logit in zip(
+                sample_ids,
+                batch_labels,
+                batch_scores,
+                probs,
+                batch_no_logits,
+                batch_yes_logits,
+            ):
                 prediction = 1 if float(score) > threshold else 0
                 row = {
                     "id": str(sample_id),
                     "label": int(label),
                     "score": float(score),
+                    "no_logit": float(no_logit),
+                    "yes_logit": float(yes_logit),
                     "probability": float(probability),
                     "prediction": int(prediction),
                     # 对外工件统一使用 1/0，避免模型协议里的 yes/no 泄漏到算法输入。

@@ -6,7 +6,7 @@
 
 1. 所有方法必须使用同一份 `DATA` 和同一套 oracle 标签。
 2. CGSD 需要 embedding 文件；4B cascade 和 GPT-5 baseline 的输出不由当前仓库生成。
-3. 每个方法单独输出目录，例如 `outputs/exp5_cgsd`、`outputs/exp5_random_sft`。
+3. 每个方法单独 `RUN_NAME`，例如 `exp5_cgsd`、`exp5_random_sft`，输出在 `experiments/runs/<dataset>/<run_name>/`。
 4. 外部方法需要提前整理成同一张结果表，至少包含 `method/raw_accuracy/final_accuracy/defer_rate/teacher_calls/student_calls/teacher_prompt_tokens/teacher_completion_tokens/student_prompt_tokens/student_completion_tokens/estimated_cost`。
 5. 如果 oracle 用真实 API teacher，先生成覆盖全量样本的 teacher 文件；如果 oracle 用公开 groundtruth，所有方法都必须使用同一份 `groundtruth`。
 
@@ -26,20 +26,19 @@
 按实验 1 跑完整 CGSD，建议固定总预算 500 和温度 15。
 
 ```bash
-python scripts/cgsd_prepare.py --data_path "$DATA" --embeddings_path "$EMB" --output_dir "$OUT" --n_calibration 200 --seed 1
-python scripts/cgsd_predict.py --output_dir "$OUT" --round_index 0 --model_path "$MODEL" --data_path "$DATA" --teacher_labels_path "$TEACHER"
-python scripts/cgsd_calibrate.py --output_dir "$OUT" --round_index 0 --temperature 15 --alpha 0.07
-python scripts/cgsd_select.py --output_dir "$OUT" --round_index 0 --embeddings_path "$EMB" --budget 500
-python scripts/cgsd_train_round.py --output_dir "$OUT" --round_index 1 --model_path "$MODEL" --data_path "$DATA"
-python scripts/cgsd_predict.py --output_dir "$OUT" --round_index 1 --model_path "$MODEL" --data_path "$DATA" --checkpoint_dir "$OUT/round_1/model" --teacher_labels_path "$TEACHER"
-python scripts/cgsd_calibrate.py --output_dir "$OUT" --round_index 1 --temperature 15 --alpha 0.07
-python scripts/cgsd_finalize.py --output_dir "$OUT" --round_index 1
+export DATASET=lrobench
+export RUN_NAME=exp5_cgsd_seed1
+export DIM=2560
+BUDGET=500 experiments/bin/cgsd_round0_select.sh
+ROUND=1 experiments/bin/cgsd_train_round.sh
+ROUND=1 experiments/bin/cgsd_eval_round.sh
+ROUND=1 experiments/bin/cgsd_finalize.sh
 ```
 
 ## Random SFT + CRC
 
-1. 手工从 pool 中随机生成 `$OUT/cgsd_train_rows.jsonl`，格式与 `cgsd_select.py` 输出一致。
-2. 复用 `cgsd_train_round.py -> cgsd_predict.py -> cgsd_calibrate.py -> cgsd_finalize.py`。
+1. 用 `experiments/bin/cgsd_baseline_rows.sh` 生成 Random 的 `$OUT/cgsd_train_rows.jsonl`。
+2. 复用 `cgsd_train_round.sh -> cgsd_eval_round.sh -> cgsd_finalize.sh`。
 
 ## 普通 LoRA 参考线
 
@@ -50,11 +49,11 @@ python scripts/train.py \
   --mode lora_attention_mlp \
   --model_path "$MODEL" \
   --data_path "$DATA" \
-  --output_dir outputs/exp5_lora_reference \
+  --output_dir experiments/runs/$DATASET/exp5_lora_reference \
   --balance_train_classes
 
 python scripts/evaluate.py \
-  --checkpoint_dir outputs/exp5_lora_reference \
+  --checkpoint_dir experiments/runs/$DATASET/exp5_lora_reference \
   --data_path "$DATA" \
   --split_name test
 ```
@@ -64,7 +63,7 @@ python scripts/evaluate.py \
 把外部系统结果统一记录到本实验目录的结果表中：
 
 1. Full GPT-5：teacher 总调用数、最终准确率、成本。
-2. 4B ZS Cascade：defer 率、最终准确率、成本。
+2. 4B ZS baseline：defer 率、最终准确率、成本。
 3. 4B 二次分流：defer 率、最终准确率、成本。
 
 建议外部结果文件格式：

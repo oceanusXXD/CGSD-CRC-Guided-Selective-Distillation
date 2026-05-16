@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -21,7 +22,6 @@ from scripts.cgsd_cli_common import (
     stage_cache_decision,
     write_stage_usage,
 )
-from algorithms.cgsd import split_calibration_pool_ids
 from scripts.run_cgsd import (
     assert_embedding_coverage,
     examples_to_rows,
@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embeddings_path", required=True)
     parser.add_argument("--embedding_dim", type=int, default=1024)
     parser.add_argument("--n_calibration", type=int, default=200)
+    parser.add_argument("--n_final_calibration", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     add_stage_cache_args(parser)
     return parser.parse_args()
@@ -77,21 +78,31 @@ def main() -> None:
         label_field=args.label_field,
     )
     rows = examples_to_rows(examples)
-    calibration_ids, pool_ids = split_calibration_pool_ids(
-        rows,
-        n_calibration=args.n_calibration,
-        seed=args.seed,
-        stratified=False,
-    )
+    if int(args.n_calibration) <= 0:
+        raise ValueError("--n_calibration must be positive")
+    if int(args.n_final_calibration) < 0:
+        raise ValueError("--n_final_calibration must be non-negative")
+    if int(args.n_calibration) + int(args.n_final_calibration) >= len(rows):
+        raise ValueError("--n_calibration + --n_final_calibration must be smaller than the dataset size")
+    all_ids = [str(row["id"]) for row in rows]
+    rng = random.Random(int(args.seed))
+    rng.shuffle(all_ids)
+    calibration_ids = all_ids[: int(args.n_calibration)]
+    final_calibration_ids = all_ids[
+        int(args.n_calibration) : int(args.n_calibration) + int(args.n_final_calibration)
+    ]
+    pool_ids = all_ids[int(args.n_calibration) + int(args.n_final_calibration) :]
     embeddings_by_id = load_embeddings(embeddings_path)
     assert_embedding_coverage(embeddings_by_id, rows, expected_dim=args.embedding_dim)
 
     split_payload = {
         "calibration_ids": calibration_ids,
         "pool_ids": pool_ids,
+        "final_calibration_ids": final_calibration_ids,
         "n_calibration": args.n_calibration,
+        "n_final_calibration": args.n_final_calibration,
         "seed": args.seed,
-        "split_algorithm": "fixed_random_calibration_pool_v1",
+        "split_algorithm": "fixed_random_calibration_final_calibration_pool_v1",
     }
     write_json(split_payload, split_ids_path)
     write_stage_usage(
@@ -103,6 +114,7 @@ def main() -> None:
             "split_ids_path": str(split_ids_path),
             "data_rows": len(rows),
             "calibration_size": len(calibration_ids),
+            "final_calibration_size": len(final_calibration_ids),
             "pool_size": len(pool_ids),
             "embedding": embedding_usage_payload(
                 embedding_source=embeddings_path,

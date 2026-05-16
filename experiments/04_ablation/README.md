@@ -1,6 +1,6 @@
 # 实验 4：消融实验
 
-当前代码可直接跑 `delta`、迭代轮次、LoRA rank、teacher beta、easy anchor；band 比例没有 CLI 参数，当前代码不能直接跑 A1/A2/A3/A4/A5 的 band 比例消融。
+当前代码可直接跑 `delta`、band 比例、迭代轮次、LoRA rank、teacher beta、easy anchor。
 
 ## 数据前置
 
@@ -34,6 +34,29 @@ python scripts/cgsd_select.py \
 ```
 
 重复 `0.05, 0.1, 0.15, 0.2`。
+
+## Band 比例消融
+
+用 `BAND_RATIOS` 控制 DBDS 的 B/M/F 比例：
+
+```bash
+export DATASET=lrobench
+export RUN_NAME=exp4_band_all_boundary_seed1
+export DIM=2560
+BUDGET=500 BAND_RATIOS=1,0,0 experiments/bin/cgsd_round0_select.sh
+ROUND=1 experiments/bin/cgsd_train_round.sh
+ROUND=1 experiments/bin/cgsd_eval_round.sh
+```
+
+重复：
+
+```text
+1,0,0
+0.6,0.3,0.1
+0.33,0.34,0.33
+0,0,1
+0,1,0
+```
 
 ## 迭代轮次消融
 
@@ -94,8 +117,10 @@ python scripts/cgsd_select.py \
 
 重复 `0, 0.05, 0.1, 0.2`。
 
-## 当前不能直接跑的项
+## 聚合
 
-Band 比例消融需要把 `algorithms.cgsd.select_dbds_samples(..., band_ratios=...)` 暴露到 `cgsd_select.py` 的 CLI；当前 README 只记录这个限制，不假装已经支持。
-
-如果必须先跑 band 比例消融，只能写一个临时 selection 脚本或修改 `cgsd_select.py` 暴露 `--band_ratios`，并确保 usage 里记录具体比例。
+```bash
+experiments/bin/cgsd_collect_results.py \
+  --runs 'experiments/runs/lrobench/exp4_*_seed1' \
+  --output_csv experiments/runs/lrobench/exp4_ablation_seed1.csv
+```

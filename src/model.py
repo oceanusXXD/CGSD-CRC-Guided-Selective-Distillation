@@ -258,7 +258,7 @@ class QwenGenerativeModel(nn.Module):
 
         config = self.checkpoint_config()
         if extra_config:
-            config.update(extra_config)
+            config.update({key: value for key, value in extra_config.items() if value is not None})
         write_json(config, target_dir / "model_config.json")
 
         if self.mode in LORA_MODES:
@@ -286,16 +286,20 @@ class QwenGenerativeModel(nn.Module):
         # Evaluation can override the recorded model path when checkpoints move.
         base_model_path = str(model_path) if model_path is not None else str(config["model_path"])
 
+        def config_value(key: str, default: Any) -> Any:
+            value = config.get(key, default)
+            return default if value is None else value
+
         model = cls(
             model_path=base_model_path,
             mode=mode,
-            lora_r=int(config.get("lora_r", 8)),
-            lora_alpha=int(config.get("lora_alpha", 16)),
-            lora_dropout=float(config.get("lora_dropout", 0.05)),
-            lora_target_modules=str(config.get("lora_target_modules", "attention_mlp")),
-            lora_layer_scope=str(config.get("lora_layer_scope", "last1")),
+            lora_r=int(config_value("lora_r", 8)),
+            lora_alpha=int(config_value("lora_alpha", 16)),
+            lora_dropout=float(config_value("lora_dropout", 0.05)),
+            lora_target_modules=str(config_value("lora_target_modules", "attention_mlp")),
+            lora_layer_scope=str(config_value("lora_layer_scope", "last1")),
             torch_dtype=torch_dtype,
-            trust_remote_code=bool(config.get("trust_remote_code", True)),
+            trust_remote_code=bool(config_value("trust_remote_code", True)),
             adapter_path=adapter_path,
             adapters_trainable=False,
         )

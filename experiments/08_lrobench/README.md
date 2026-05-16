@@ -4,10 +4,10 @@
 
 ## 数据前置
 
-1. 当前仓库没有内置 `datasets/lrobench/` 文件；如需跑本实验，需要先把 LROBench 每个 query 转成一个 JSONL。
-2. 转换后的 JSONL 每行至少包含 `id/query/document/groundtruth`，可额外保留 `query_id/document_id/review_id/parsed_answer/parsed_confidence`，与当前本地数据格式保持一致。
-3. 每个 query 准备独立 embedding 文件，覆盖该 query 下所有 row。当前仓库没有提交 embedding，需要实验前生成。
-4. 每个 query 使用独立输出目录，例如 `outputs/lrobench_q01_seed1`。
+1. 当前已有合并版入口：`experiments/inputs/lrobench/data.jsonl` 和 `experiments/inputs/lrobench/embeddings.npy`，可作为 pooled multi-query smoke test。
+2. 严格 LROBench 结果仍建议拆成 per-query JSONL：每行至少包含 `id/query/document/groundtruth`，可额外保留 `query_id/document_id/review_id/parsed_answer/parsed_confidence`。
+3. 每个 query 准备独立 embedding 文件，覆盖该 query 下所有 row；放到 `experiments/inputs/lrobench_<query>/embeddings.npy`。
+4. 每个 query 使用独立 `RUN_NAME`，例如 `q01_seed1`，输出在 `experiments/runs/lrobench_<query>/q01_seed1/`。
 5. `id` 建议包含 query 编号和 row 编号，例如 `q01_row003`，避免跨 query 合并时冲突。
 6. `document` 可以是原始 row 文本，也可以是稳定序列化后的字段串；同一实验里必须固定格式。
 7. 如果每个 query 只有几十条样本，先确认 `n_calibration + budget + anchor_count` 小于该 query 的样本数。
@@ -24,43 +24,27 @@ LROBench 的 baseline 以 per-query 为单位记录，不能把不同 query 的 
 
 ## Per-query 独立训练
 
-对每个 query 单独运行：
+先把合并版数据拆成 per-query 输入目录：
 
 ```bash
-export DATA=datasets/lrobench/q01.jsonl
-export EMB=datasets/lrobench/q01.embeddings.jsonl
-export OUT=outputs/lrobench_q01_seed1
+experiments/bin/cgsd_split_lrobench_inputs.py \
+  --data_path experiments/inputs/lrobench/data.jsonl \
+  --embeddings_path experiments/inputs/lrobench/embeddings.npy \
+  --output_root experiments/inputs \
+  --prefix lrobench
+```
 
-python scripts/cgsd_prepare.py \
-  --data_path "$DATA" \
-  --embeddings_path "$EMB" \
-  --output_dir "$OUT" \
-  --n_calibration 10 \
-  --seed 1
+然后对每个 query 单独运行：
 
-python scripts/cgsd_predict.py \
-  --output_dir "$OUT" \
-  --round_index 0 \
-  --model_path "$MODEL" \
-  --data_path "$DATA"
+```bash
+export DATASET=lrobench_q01
+export RUN_NAME=q01_seed1
+export DIM=2560
+export N_CALIBRATION=10
 
-python scripts/cgsd_calibrate.py \
-  --output_dir "$OUT" \
-  --round_index 0 \
-  --temperature 15 \
-  --alpha 0.07
-
-python scripts/cgsd_select.py \
-  --output_dir "$OUT" \
-  --round_index 0 \
-  --embeddings_path "$EMB" \
-  --budget 10
-
-python scripts/cgsd_train_round.py \
-  --output_dir "$OUT" \
-  --round_index 1 \
-  --model_path "$MODEL" \
-  --data_path "$DATA"
+BUDGET=10 ANCHOR_COUNT=0 experiments/bin/cgsd_round0_select.sh
+ROUND=1 experiments/bin/cgsd_train_round.sh
+ROUND=1 experiments/bin/cgsd_eval_round.sh
 ```
 
 ## 小样本注意事项

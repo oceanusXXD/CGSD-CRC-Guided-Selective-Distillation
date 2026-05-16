@@ -4,11 +4,11 @@
 
 ## 数据前置
 
-1. 直接使用当前仓库的本地 JSONL，或准备同结构数据；每行至少有 `id/query/document/groundtruth`。当前本地数据还带有 `query_id/document_id/review_id/parsed_answer`，部分文件带有 `parsed_confidence`。
-2. 当前可选数据规模：`query_id_1/2/3` 各 9,297 行，`twitter_hate_query_id_1` 为 24,783 行，`imdb_query_id_1/2/3` 各 49,990 行；具体标签分布见根目录 README 和对应 `*.metadata.json`。
-3. 准备覆盖全量 ID 的 pair embedding 文件；默认 `--embedding_dim 1024`，格式见根目录 README。当前仓库没有提交 embedding，需要实验前生成。
+1. 使用 `experiments/inputs/<dataset>/data.jsonl` 和 `experiments/inputs/<dataset>/embeddings.npy` 作为实验入口；输出统一写到 `experiments/runs/<dataset>/<run_name>/`。
+2. 当前 `lrobench` 已有数据和 2560 维 embedding，可以直接跑。`fever` 已有数据，但还缺 `experiments/inputs/fever/embeddings.npy`。
+3. 每行至少有 `id/query/document/groundtruth`；FEVER 的 `query` 是固定任务句，`document` 包含 Claim 和 Evidence。
 4. 可选准备真实 teacher 文件：至少包含 `id` 和 `teacher_label`，可选 `teacher_confidence` 或 `teacher_logit_margin`；不准备时使用 `groundtruth` 离线替代。
-5. 为 5 个 seed 分别设置独立输出目录，例如 `outputs/cgsd_exp1_seed1`。
+5. 为 5 个 seed 分别设置独立 `RUN_NAME`，例如 `exp1_seed1`。
 6. 严格实验固定温度 `--temperature 15`，不要用 round0 温度扫描作为正式结果。
 
 ## 输入检查
@@ -29,7 +29,68 @@
 4. `$OUT/cgsd_train_rows.jsonl`：只在预算、anchor、`teacher_beta`、selection round 完全一致时复用；Random、Uncertainty、k-Center、Defer-Random baseline 必须各自生成训练行。
 5. `$OUT/cgsd_summary.json`、`$OUT/deployment_decisions.jsonl` 和各 stage usage JSON：如果实验 5 采用同一套 CGSD 配置，可以直接作为 CGSD 端到端结果；否则只作为参考缓存，不要混入结果表。
 
-## 运行步骤
+## 轻量脚本运行步骤
+
+先设置一次变量：
+
+```bash
+export DATASET=lrobench
+export RUN_NAME=exp1_seed1
+export MODEL=model/qwen3-0.6b
+export DIM=2560
+export SEED=1
+export ALPHA=0.07
+export TEMP=15
+```
+
+如果要重算某一步：
+
+```bash
+export CACHE_POLICY=overwrite
+```
+
+1. 一口气跑到 round0 选样，默认 budget 250：
+
+```bash
+experiments/bin/cgsd_round0_select.sh
+```
+
+2. 训练 round1：
+
+```bash
+ROUND=1 experiments/bin/cgsd_train_round.sh
+```
+
+3. 评估 round1：
+
+```bash
+ROUND=1 experiments/bin/cgsd_eval_round.sh
+```
+
+看 `experiments/runs/$DATASET/$RUN_NAME/round_1/round_summary.json`。如果继续：
+
+```bash
+ROUND=1 BUDGET=150 experiments/bin/cgsd_select_round.sh
+ROUND=2 experiments/bin/cgsd_train_round.sh
+ROUND=2 experiments/bin/cgsd_eval_round.sh
+```
+
+再看 `round_2/round_summary.json`。如果继续第三轮：
+
+```bash
+ROUND=2 BUDGET=100 experiments/bin/cgsd_select_round.sh
+ROUND=3 experiments/bin/cgsd_train_round.sh
+ROUND=3 experiments/bin/cgsd_eval_round.sh
+ROUND=3 experiments/bin/cgsd_finalize.sh
+```
+
+确认配置没问题、想 overnight 跑完整默认三轮时，可以用：
+
+```bash
+experiments/bin/cgsd_run_exp1_default_3rounds.sh
+```
+
+## 原始 CLI 运行步骤
 
 1. 固定划分并校验 embedding：
 

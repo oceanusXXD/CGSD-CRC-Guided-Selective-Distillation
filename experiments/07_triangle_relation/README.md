@@ -1,6 +1,6 @@
 # 实验 7：三角关系验证
 
-当前代码不单独提供三角关系脚本；这个实验由实验 3 的预算曲线和实验 6 的 CRC 保证结果汇总得到。
+当前代码通过 `experiments/bin/cgsd_collect_results.py` 汇总实验 3 的预算曲线、实验 6 的 CRC 保证结果和 usage/cost 字段；画图仍用外部工具。
 
 ## 数据前置
 
@@ -23,10 +23,16 @@
 1. 对每个预算 `m` 跑实验 3，得到 `rho(m)`。
 2. 对每个预算 `m` 记录 `accept_error_rate(m)`。
 3. 从 usage 文件读取 teacher 调用、student 调用、embedding 使用量和 token 估算。
-4. 用外部聚合脚本计算：
+4. 用 `cgsd_collect_results.py` 汇总并按需要传成本常量：
 
-```text
-C(m) = (m + n_cal + rho(m) * N) * c_T + N * c_S
+```bash
+experiments/bin/cgsd_collect_results.py \
+  --runs 'experiments/runs/lrobench/exp3_m*_seed1' \
+  --teacher_prompt_cost_per_million 1.25 \
+  --teacher_completion_cost_per_million 10.0 \
+  --student_prompt_cost_per_million 0.03 \
+  --student_completion_cost_per_million 0.06 \
+  --output_csv experiments/runs/lrobench/exp7_triangle_seed1.csv
 ```
 
 如果没有关闭 easy anchor，把公式里的 `m` 改成 `m + floor(0.1*m)`；如果统计实验总成本，还要把每轮 `predict_usage.json` 的 student 调用全部加进去。
@@ -47,4 +53,4 @@ C(m) = (m + n_cal + rho(m) * N) * c_T + N * c_S
 
 ## 当前代码限制
 
-当前仓库能产生表格所需的原始 JSON；画图、成本常量管理、均值方差聚合还需要额外脚本。
+当前仓库能产生表格所需的 CSV；图表绘制仍需要外部 plotting 脚本或 notebook。

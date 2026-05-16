@@ -32,13 +32,10 @@
 
 ## 当前不能直接完成的实验项
 
-1. 实验 2 的 Random、Uncertainty、k-Center、Defer-Random 没有独立 baseline selection CLI，需要手工生成 `cgsd_train_rows.jsonl`。
-2. 实验 4 的 band 比例消融在算法函数里有参数，但 `cgsd_select.py` 没有暴露 CLI。
-3. 实验 5 的 Full GPT-5、4B zero-shot cascade、4B 二次分流不由当前仓库生成，需要外部结果文件。
-4. 实验 6 的 20 seed 聚合和违反率统计没有自动脚本。
-5. 实验 7 的成本曲线、图表、均值方差聚合没有自动脚本。
-6. 实验 8 的 cross-query LoRA 参数平均/迁移没有实现；当前只支持 per-query 独立训练。
-7. embedding 生成 pipeline 和真实 teacher API 调用 pipeline 不在当前仓库里；当前代码只读取已经准备好的文件。
+1. 实验 5 的 Full GPT-5、4B zero-shot baseline、4B 二次分流不由当前仓库生成，需要外部结果文件。
+2. 实验 8 的 cross-query LoRA 参数平均/迁移没有实现；当前只支持 per-query 独立训练。
+3. FEVER embedding 还没有生成，FEVER 正式 CGSD 需要先补齐 `experiments/inputs/fever/embeddings.npy`。
+4. 图表绘制仍需要外部 plotting 脚本或 notebook；当前仓库提供 run-level CSV/CRC summary 聚合。
 
 ## 严格实验建议
 

@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split_ids_path", default=None)
     parser.add_argument("--train_rows_path", default=None)
     parser.add_argument("--checkpoint_dir", default=None)
+    parser.add_argument("--init_adapter_path", default=None)
     parser.add_argument("--training_rows_used_path", default=None)
     parser.add_argument("--train_label_snapshot_path", default=None)
     parser.add_argument("--training_summary_path", default=None)
@@ -121,6 +122,7 @@ def main() -> None:
     write_jsonl(training_rows_snapshot, training_rows_used_path)
 
     model_path = input_artifact_path(args.model_path, PROJECT_ROOT / "model" / "qwen3-0.6b")
+    init_adapter_path = input_artifact_path(args.init_adapter_path, output_dir) if args.init_adapter_path else None
     tokenizer = AutoTokenizer.from_pretrained(
         model_path,
         trust_remote_code=runtime_args.trust_remote_code,
@@ -145,6 +147,7 @@ def main() -> None:
         eval_examples=calibration_examples,
         tokenizer=tokenizer,
         model_path=model_path,
+        init_adapter_path=init_adapter_path,
         output_dir=checkpoint_dir,
         device=device,
         args=runtime_args,
@@ -169,6 +172,7 @@ def main() -> None:
             "selection_round_counts": selection_round_counts,
             "source_selection_rounds": sorted(selection_round_counts),
             "training_mode": "lora_sft_from_base_model",
+            "init_adapter_path": str(init_adapter_path) if init_adapter_path is not None else None,
         },
         training_summary_path,
     )
