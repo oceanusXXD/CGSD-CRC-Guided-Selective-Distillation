@@ -2,7 +2,7 @@
 
 该模块只放纯算法逻辑，不加载模型、不调用外部 API，也不依赖项目外的
 cascade 代码。脚本层负责把模型预测、teacher 标签和 embedding 转成这里的
-输入行，算法层只负责 CRC 校准、defer 集识别、DBDS 选样和部署决策。
+输入行，算法层只负责 CRC 校准、defer 集识别、k-Center 选样和部署决策。
 """
 
 from __future__ import annotations
@@ -17,11 +17,13 @@ import numpy as np
 
 DEFAULT_LAMBDA_GRID = tuple(round(index / 100.0, 2) for index in range(101))
 DEFAULT_TEMPERATURE_GRID = (5.0, 10.0, 15.0, 20.0)
-DEFAULT_BAND_RATIOS = {"B": 0.6, "M": 0.3, "F": 0.1}
+NEIGHBOR_SUPPORT_EPS = 1e-6
+QUERY_REFERENCE_SHRINKAGE_K = 12.0
+THRESHOLD_MULTIPLIER_GAMMA = 0.5
 
 
 class CGSDEmbeddingError(RuntimeError):
-    """DBDS 缺少真实 pair embedding 时抛出的错误。"""
+    """k-Center 选择缺少真实 pair embedding 时抛出的错误。"""
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,10 @@ class CRCResult:
     empirical_risk: float
     risk_bound: float
     grid_feasible: bool
+    neighbor_support_enabled: bool = False
+    neighbor_support_reference: float | None = None
+    query_reference_supports: dict[str, float] | None = None
+    threshold_function: str = "global_threshold"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +57,14 @@ class CRCResult:
             "grid_feasible": bool(self.grid_feasible),
             "method": "crc_wrong_accept_risk_v1",
             "loss": "1{routing_score>=lambda}*1{prediction!=teacher_label}",
+            "neighbor_support_enabled": bool(self.neighbor_support_enabled),
+            "neighbor_support_reference": (
+                None
+                if self.neighbor_support_reference is None
+                else float(self.neighbor_support_reference)
+            ),
+            "query_reference_supports": dict(self.query_reference_supports or {}),
+            "threshold_function": str(self.threshold_function),
         }
 
 
@@ -75,26 +89,19 @@ class TemperatureChoice:
 
 
 @dataclass(frozen=True)
-class DBDSSelection:
-    """DBDS 选出的蒸馏样本和 easy-anchor 样本。"""
+class DeferSelection:
+    """从当前 defer 集选出的蒸馏样本。"""
 
     distillation_ids: list[str]
-    anchor_ids: list[str]
-    band_counts: dict[str, int]
     requested_budget: int
     selected_budget: int
-    anchor_budget: int
-    anchor_candidate_source: str = "student_correct_high_confidence"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "distillation_ids": list(self.distillation_ids),
-            "anchor_ids": list(self.anchor_ids),
-            "band_counts": dict(self.band_counts),
             "requested_budget": int(self.requested_budget),
             "selected_budget": int(self.selected_budget),
-            "anchor_budget": int(self.anchor_budget),
-            "anchor_candidate_source": str(self.anchor_candidate_source),
+            "selection_method": "defer_k_center",
         }
 
 
@@ -131,7 +138,7 @@ def _binary_to_int(value: Any, *, field_name: str) -> int:
     """把外部输入里的 yes/no/true/false/1/0 统一收敛成 1/0。
 
     CGSD 算法层不直接消费字符串标签。模型协议里可以用 yes/no token，
-    但进入 CRC、DBDS、迭代停止和部署决策前，标签和预测必须都是整数，
+    但进入 CRC、选样、迭代停止和部署决策前，标签和预测必须都是整数，
     这样不同阶段写出的 JSONL 不会出现混合口径。
     """
     if isinstance(value, str):
@@ -164,6 +171,181 @@ def _row_prediction(row: Mapping[str, Any]) -> int:
     return _binary_to_int(value, field_name="binary prediction")
 
 
+def _row_query_id(row: Mapping[str, Any]) -> str:
+    value = row.get("query_id")
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    sample_id = _row_id(row)
+    if ":" in sample_id:
+        return sample_id.rsplit(":", 1)[-1].strip()
+    return ""
+
+
+def _clip_unit(value: Any) -> float:
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number) or number <= 0.0:
+        return 0.0
+    if number >= 1.0:
+        return 1.0
+    return float(number)
+
+
+def _threshold_multiplier(neighbor_support: float, reference_support: float) -> float:
+    """把局部 neighbor support 转成阈值缩放因子。
+
+    support 高于参考值时，阈值会降低一些，允许更多局部一致的样本 accept；
+    support 低于参考值时，阈值会升高，要求模型 margin 更强才 accept。
+    """
+    support = _clip_unit(neighbor_support)
+    base = max(NEIGHBOR_SUPPORT_EPS, _clip_unit(reference_support))
+    ratio = (base + NEIGHBOR_SUPPORT_EPS) / (support + NEIGHBOR_SUPPORT_EPS)
+    return float(max(NEIGHBOR_SUPPORT_EPS, ratio) ** THRESHOLD_MULTIPLIER_GAMMA)
+
+
+def _adaptive_threshold(lambda_hat: float, neighbor_support: float, reference_support: float) -> float:
+    return _clip_unit(float(lambda_hat) * _threshold_multiplier(neighbor_support, reference_support))
+
+
+def _lambda_transition(routing_score: float, neighbor_support: float, reference_support: float) -> float:
+    """NS 自适应阈值下的候选 lambda 转折点。
+
+    启用 neighbor support 时，每条样本的决策阈值不是全局 lambda，
+    而是 lambda 乘上局部缩放因子。扫描这些转折点即可覆盖所有 accept
+    集变化位置，比固定 0.00-1.00 网格更精确。
+    """
+    score = _clip_unit(routing_score)
+    if score >= 1.0 - 1e-12:
+        return 1.0
+    multiplier = _threshold_multiplier(neighbor_support, reference_support)
+    if multiplier <= 1e-12:
+        return 1.0
+    return _clip_unit(score / multiplier)
+
+
+def _embedding_for_id(embeddings_by_id: Mapping[str, np.ndarray], sample_id: str) -> np.ndarray:
+    if sample_id not in embeddings_by_id:
+        raise CGSDEmbeddingError(
+            "CRC neighbor support requires real precomputed pair embeddings; "
+            f"missing id: {sample_id!r}"
+        )
+    vector = np.asarray(embeddings_by_id[sample_id], dtype=np.float32)
+    if vector.ndim != 1 or vector.size == 0:
+        raise CGSDEmbeddingError(f"invalid embedding vector for id: {sample_id!r}")
+    return vector
+
+
+def _support_bank_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    bank: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("label", row.get("groundtruth")) is None:
+            continue
+        item = dict(row)
+        item["id"] = _row_id(row)
+        item["prediction"] = _row_prediction(row)
+        item["label"] = _row_label(row)
+        bank.append(item)
+    return bank
+
+
+def _attach_neighbor_support_scores(
+    target_rows: Sequence[Mapping[str, Any]],
+    *,
+    embeddings_by_id: Mapping[str, np.ndarray],
+    support_rows: Sequence[Mapping[str, Any]],
+    exclude_self: bool,
+) -> list[dict[str, Any]]:
+    """Attach Step2-style local empirical reliability N_i to row dictionaries."""
+    output = [dict(row) for row in target_rows]
+    bank_rows = _support_bank_rows(support_rows)
+    if not output or not bank_rows:
+        for row in output:
+            row["neighbor_support"] = 0.0
+        return output
+
+    bank_ids = [_row_id(row) for row in bank_rows]
+    target_ids = [_row_id(row) for row in output]
+    bank_matrix = _normalize_embedding_matrix(
+        np.vstack([_embedding_for_id(embeddings_by_id, sample_id) for sample_id in bank_ids])
+    )
+    target_matrix = _normalize_embedding_matrix(
+        np.vstack([_embedding_for_id(embeddings_by_id, sample_id) for sample_id in target_ids])
+    )
+    bank_preds = np.asarray([_row_prediction(row) for row in bank_rows], dtype=np.int64)
+    bank_labels = np.asarray([_row_label(row) for row in bank_rows], dtype=np.int64)
+    bank_index_by_id = {sample_id: index for index, sample_id in enumerate(bank_ids)}
+    sim_matrix = np.matmul(target_matrix, bank_matrix.T)
+    if exclude_self:
+        for row_index, sample_id in enumerate(target_ids):
+            bank_index = bank_index_by_id.get(sample_id)
+            if bank_index is not None:
+                sim_matrix[row_index, bank_index] = -np.inf
+
+    for row_index, row in enumerate(output):
+        pred = _row_prediction(row)
+        similarities = sim_matrix[row_index]
+        finite_indices = np.flatnonzero(np.isfinite(similarities))
+        same_pred_indices = finite_indices[bank_preds[finite_indices] == pred]
+        if same_pred_indices.size == 0:
+            row["neighbor_support"] = 0.0
+            continue
+        weights = np.clip(similarities[same_pred_indices], a_min=0.0, a_max=None).astype(np.float64)
+        total_weight = float(np.sum(weights))
+        if total_weight <= 1e-12:
+            row["neighbor_support"] = 0.0
+            continue
+        support_weight = float(np.sum(weights[bank_labels[same_pred_indices] == pred]))
+        row["neighbor_support"] = float(max(0.0, min(1.0, support_weight / total_weight)))
+    return output
+
+
+def _neighbor_support_reference(rows: Sequence[Mapping[str, Any]]) -> float:
+    values = [_clip_unit(row.get("neighbor_support", 0.0)) for row in rows]
+    if not values:
+        return NEIGHBOR_SUPPORT_EPS
+    return float(max(NEIGHBOR_SUPPORT_EPS, min(1.0, float(np.median(np.asarray(values, dtype=np.float64))))))
+
+
+def _query_reference_supports(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    global_reference_support: float,
+) -> dict[str, float]:
+    grouped: dict[str, list[float]] = {}
+    global_ref = max(NEIGHBOR_SUPPORT_EPS, _clip_unit(global_reference_support))
+    for row in rows:
+        query_id = _row_query_id(row)
+        if not query_id:
+            continue
+        grouped.setdefault(query_id, []).append(_clip_unit(row.get("neighbor_support", 0.0)))
+
+    references: dict[str, float] = {}
+    for query_id, values in grouped.items():
+        local_ref = max(
+            NEIGHBOR_SUPPORT_EPS,
+            min(1.0, float(np.median(np.asarray(values, dtype=np.float64)))),
+        )
+        weight = float(len(values) / (len(values) + QUERY_REFERENCE_SHRINKAGE_K))
+        references[query_id] = float(
+            max(NEIGHBOR_SUPPORT_EPS, min(1.0, (weight * local_ref) + ((1.0 - weight) * global_ref)))
+        )
+    return references
+
+
+def _row_reference_support(
+    row: Mapping[str, Any],
+    *,
+    global_reference_support: float,
+    query_reference_supports: Mapping[str, float] | None,
+) -> float:
+    query_id = _row_query_id(row)
+    if query_reference_supports and query_id in query_reference_supports:
+        return max(NEIGHBOR_SUPPORT_EPS, _clip_unit(query_reference_supports[query_id]))
+    return max(NEIGHBOR_SUPPORT_EPS, _clip_unit(global_reference_support))
+
+
 def sigmoid_abs_margin(score: float, temperature: float) -> float:
     """把 logit margin 映射到 CRC 路由分数 R_i。
 
@@ -190,7 +372,7 @@ def attach_routing_scores(
 
     输入行必须已经包含 student 的二分类 logit margin `score`。
     这里统一把 score 转成文档中的 R_i=sigma(|ell_i|/T)，后续 CRC、
-    DBDS 和部署判断都只消费这个同一口径的 `routing_score`。
+    选样和部署判断都只消费这个同一口径的 `routing_score`。
     """
     routed: list[dict[str, Any]] = []
     for row in rows:
@@ -216,6 +398,7 @@ def calibrate_crc(
     alpha: float,
     temperature: float,
     lambda_grid: Iterable[float] = DEFAULT_LAMBDA_GRID,
+    embeddings_by_id: Mapping[str, np.ndarray] | None = None,
 ) -> CRCResult:
     """在校准集上搜索最宽松且满足 wrong-accept 风险的 CRC 阈值。
 
@@ -231,17 +414,67 @@ def calibrate_crc(
     if not (0.0 <= risk_target <= 1.0):
         raise ValueError("alpha must be within [0, 1]")
 
+    if embeddings_by_id is not None:
+        # In the round pipeline, calibration_rows is D_guide. This branch
+        # builds the intermediate adaptive CRC from D_guide and estimates
+        # neighbor support within D_guide itself, excluding each row's own
+        # embedding. D_cert must stay out of this path; use it only for the
+        # final-result CRC/evaluation layer.
+        rows = _attach_neighbor_support_scores(
+            rows,
+            embeddings_by_id=embeddings_by_id,
+            support_rows=rows,
+            exclude_self=True,
+        )
+        reference_support = _neighbor_support_reference(rows)
+        query_refs = _query_reference_supports(
+            rows,
+            global_reference_support=reference_support,
+        )
+        for row in rows:
+            row["query_reference_support"] = _row_reference_support(
+                row,
+                global_reference_support=reference_support,
+                query_reference_supports=query_refs,
+            )
+            row["lambda_transition"] = _lambda_transition(
+                float(row.get("routing_score", 0.0) or 0.0),
+                float(row.get("neighbor_support", 0.0) or 0.0),
+                float(row["query_reference_support"]),
+            )
+
+        lambda_values = sorted({0.0, 1.0, *[float(row["lambda_transition"]) for row in rows]})
+        threshold_function = "clip(lambda*(((b_q+eps)/(neighbor_support+eps))**gamma),0,1)"
+    else:
+        reference_support = None
+        query_refs = {}
+        lambda_values = sorted(float(value) for value in lambda_grid)
+        threshold_function = "global_threshold"
+
     best: CRCResult | None = None
-    for lambda_value in sorted(float(value) for value in lambda_grid):
+    for lambda_value in lambda_values:
         # 对每个 lambda 显式构造 accept 集，再计算
         # mean(1{accept and wrong})。分母固定为 n_calibration，
         # 这正是文档公式里的 (1/n) sum_j L_j(lambda)，不是
         # accept 条件下的错误率。
-        accepted = [row for row in rows if float(row["routing_score"]) >= lambda_value]
+        if embeddings_by_id is not None:
+            accepted = [
+                row
+                for row in rows
+                if float(row["routing_score"])
+                >= _adaptive_threshold(
+                    float(lambda_value),
+                    float(row.get("neighbor_support", 0.0) or 0.0),
+                    float(row.get("query_reference_support", reference_support or NEIGHBOR_SUPPORT_EPS) or NEIGHBOR_SUPPORT_EPS),
+                )
+                - 1e-12
+            ]
+        else:
+            accepted = [row for row in rows if float(row["routing_score"]) >= lambda_value]
         wrong_accept_count = sum(1 for row in accepted if _row_prediction(row) != _row_label(row))
         empirical_risk = wrong_accept_count / float(n)
         bound = crc_risk_bound(empirical_risk, n)
-        if bound <= risk_target + 1e-12:
+        if accepted and bound <= risk_target + 1e-12:
             best = CRCResult(
                 alpha=risk_target,
                 temperature=float(temperature),
@@ -252,6 +485,10 @@ def calibrate_crc(
                 empirical_risk=float(empirical_risk),
                 risk_bound=float(bound),
                 grid_feasible=True,
+                neighbor_support_enabled=embeddings_by_id is not None,
+                neighbor_support_reference=reference_support,
+                query_reference_supports=query_refs,
+                threshold_function=threshold_function,
             )
             break
 
@@ -270,6 +507,10 @@ def calibrate_crc(
         empirical_risk=0.0,
         risk_bound=crc_risk_bound(0.0, n),
         grid_feasible=False,
+        neighbor_support_enabled=embeddings_by_id is not None,
+        neighbor_support_reference=reference_support,
+        query_reference_supports=query_refs,
+        threshold_function=threshold_function,
     )
 
 
@@ -278,6 +519,9 @@ def apply_crc_decisions(
     *,
     lambda_hat: float,
     temperature: float,
+    embeddings_by_id: Mapping[str, np.ndarray] | None = None,
+    support_rows: Sequence[Mapping[str, Any]] | None = None,
+    crc_result: CRCResult | Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """用固定 lambda 和 temperature 给样本打 accept/defer 决策。
 
@@ -286,14 +530,55 @@ def apply_crc_decisions(
     """
     routed = attach_routing_scores(prediction_rows, temperature=temperature)
     threshold = float(lambda_hat)
+    neighbor_enabled = bool(
+        embeddings_by_id is not None
+        and support_rows is not None
+        and crc_result is not None
+        and (
+            bool(getattr(crc_result, "neighbor_support_enabled", False))
+            if isinstance(crc_result, CRCResult)
+            else bool(crc_result.get("neighbor_support_enabled", False))
+        )
+    )
+    if neighbor_enabled:
+        support_routed = attach_routing_scores(support_rows or [], temperature=temperature)
+        # For intermediate round decisions, callers pass D_guide as
+        # support_rows. D_cert remains isolated for the final CRC/evaluation
+        # path and should not be used as the neighbor-support bank here.
+        routed = _attach_neighbor_support_scores(
+            routed,
+            embeddings_by_id=embeddings_by_id or {},
+            support_rows=support_routed,
+            exclude_self=False,
+        )
+        if isinstance(crc_result, CRCResult):
+            reference_support = float(crc_result.neighbor_support_reference or NEIGHBOR_SUPPORT_EPS)
+            query_refs = dict(crc_result.query_reference_supports or {})
+        else:
+            reference_support = float(crc_result.get("neighbor_support_reference", NEIGHBOR_SUPPORT_EPS) or NEIGHBOR_SUPPORT_EPS)
+            query_refs = dict(crc_result.get("query_reference_supports", {}) or {})
     decided: list[dict[str, Any]] = []
     for row in routed:
         item = dict(row)
-        decision = "accept" if float(item["routing_score"]) >= threshold else "defer"
+        if neighbor_enabled:
+            reference = _row_reference_support(
+                item,
+                global_reference_support=reference_support,
+                query_reference_supports=query_refs,
+            )
+            decision_threshold = _adaptive_threshold(
+                threshold,
+                float(item.get("neighbor_support", 0.0) or 0.0),
+                reference,
+            )
+        else:
+            decision_threshold = threshold
+        decision = "accept" if float(item["routing_score"]) >= float(decision_threshold) - 1e-12 else "defer"
         item["crc_decision"] = decision
         item["defer"] = decision == "defer"
         item["crc_lambda"] = threshold
         item["crc_temperature"] = float(temperature)
+        item["decision_threshold"] = float(decision_threshold)
         decided.append(item)
     return decided
 
@@ -332,6 +617,7 @@ def choose_temperature(
     alpha: float,
     temperatures: Iterable[float] = DEFAULT_TEMPERATURE_GRID,
     lambda_grid: Iterable[float] = DEFAULT_LAMBDA_GRID,
+    embeddings_by_id: Mapping[str, np.ndarray] | None = None,
 ) -> TemperatureChoice:
     """扫描温度，选择 CRC 校准集 accept 最多的温度。
 
@@ -352,11 +638,15 @@ def choose_temperature(
             alpha=alpha,
             temperature=temperature,
             lambda_grid=lambda_grid,
+            embeddings_by_id=embeddings_by_id,
         )
         pool_decisions = apply_crc_decisions(
             pool_rows,
             lambda_hat=crc.lambda_hat,
             temperature=temperature,
+            embeddings_by_id=embeddings_by_id,
+            support_rows=calibration_rows,
+            crc_result=crc,
         )
         summary = summarize_crc_decisions(pool_decisions)
         candidate = {
@@ -448,56 +738,6 @@ def split_calibration_pool_ids(
     return calibration_ids, pool_ids
 
 
-def _band_name(routing_score: float, lambda_hat: float, delta: float) -> str:
-    """按文档 8.4.1 Step A 把 defer 样本划入 B/M/F 三个 band。"""
-    boundary_low = float(lambda_hat) - float(delta)
-    middle_low = float(lambda_hat) - (2.0 * float(delta))
-    score = float(routing_score)
-    if boundary_low <= score < float(lambda_hat):
-        return "B"
-    if middle_low <= score < boundary_low:
-        return "M"
-    return "F"
-
-
-def _quota_by_band(
-    available: Mapping[str, int],
-    *,
-    budget: int,
-    band_ratios: Mapping[str, float],
-) -> dict[str, int]:
-    """按 band 比例分配预算，并把空 band 的余量转给其他 band。"""
-    requested = int(max(0, budget))
-    # 先按 (0.6, 0.3, 0.1) 计算 B/M/F 的理论名额。
-    # floor 后的余数全部归入 F，完全对应文档里的
-    # m_F = m - m_B - m_M。
-    quotas = {
-        "B": int(math.floor(float(band_ratios.get("B", 0.6)) * requested)),
-        "M": int(math.floor(float(band_ratios.get("M", 0.3)) * requested)),
-    }
-    quotas["F"] = requested - quotas["B"] - quotas["M"]
-    for band in ("B", "M", "F"):
-        quotas[band] = min(max(0, quotas.get(band, 0)), int(available.get(band, 0)))
-
-    # 某个 band 样本不足时，文档要求把剩余名额分给其他 band。
-    # 这里按 B->M->F 的固定顺序补齐，保持边界优先且确定性可复现。
-    while sum(quotas.values()) < requested:
-        choices = [
-            band
-            for band in ("B", "M", "F")
-            if quotas.get(band, 0) < int(available.get(band, 0))
-        ]
-        if not choices:
-            break
-        for band in ("B", "M", "F"):
-            if band not in choices:
-                continue
-            if sum(quotas.values()) >= requested:
-                break
-            quotas[band] = quotas.get(band, 0) + 1
-    return quotas
-
-
 def _normalize_embedding_matrix(matrix: np.ndarray) -> np.ndarray:
     """把 pair embedding 单位化，让欧氏距离和余弦相似度口径稳定。"""
     if matrix.size == 0:
@@ -528,7 +768,7 @@ def k_center_greedy(
     missing_ids = [str(sample_id) for sample_id in candidate_ids if str(sample_id) not in embeddings_by_id]
     if missing_ids:
         raise CGSDEmbeddingError(
-            "DBDS requires real precomputed pair embeddings for every candidate; "
+            "k-Center selection requires real precomputed pair embeddings for every candidate; "
             f"missing ids: {missing_ids[:5]}"
         )
 
@@ -560,103 +800,36 @@ def k_center_greedy(
     return selected_ids[:requested]
 
 
-def select_dbds_samples(
+def select_defer_k_center_samples(
     prediction_rows: Sequence[Mapping[str, Any]],
     *,
     defer_ids: Iterable[str],
     already_selected_ids: Iterable[str],
     budget: int,
-    lambda_hat: float,
     embeddings_by_id: Mapping[str, np.ndarray],
-    delta: float = 0.1,
-    band_ratios: Mapping[str, float] = DEFAULT_BAND_RATIOS,
-    easy_anchor_ratio: float = 0.1,
-    anchor_count: int | None = None,
-    anchor_candidate_ids: Iterable[str] | None = None,
     seed: int = 42,
-) -> DBDSSelection:
-    """执行 Defer-Boundary Diversified Selection。
+) -> DeferSelection:
+    """从当前 defer 集中用 k-Center Greedy 选择蒸馏样本。
 
-    先把当前 defer 集按 R_i 到 lambda 的距离分成 B/M/F 三个区域，再在每个
-    区域内部用 k-Center Greedy 选覆盖面最大的训练子集。最后额外选少量
-    高置信且预测正确的 easy anchors，作为 LoRA 训练的正则化样本。
+    这保留 CKD 的核心选择逻辑：CRC 先定义 student 不可靠的 defer 集，
+    然后 k-Center 在固定 embedding 空间里覆盖 defer 集的不同区域。
     """
     blocked = {str(sample_id) for sample_id in already_selected_ids}
     defer_set = {str(sample_id) for sample_id in defer_ids} - blocked
     rows_by_id = {_row_id(row): dict(row) for row in prediction_rows}
-
-    bands: dict[str, list[str]] = {"B": [], "M": [], "F": []}
-    for sample_id in defer_set:
-        row = rows_by_id.get(sample_id)
-        if row is None:
-            continue
-        band = _band_name(
-            float(row.get("routing_score", 0.0) or 0.0),
-            lambda_hat=float(lambda_hat),
-            delta=float(delta),
-        )
-        bands[band].append(sample_id)
-
-    # band 内排序不决定最终多样性选择，只负责 k-Center 的输入顺序稳定，
-    # 保证同一 seed 和同一 embedding 文件得到可复现实验结果。
-    for ids in bands.values():
-        ids.sort(key=lambda sample_id: (-float(rows_by_id[sample_id].get("routing_score", 0.0) or 0.0), sample_id))
-
-    quotas = _quota_by_band(
-        {band: len(ids) for band, ids in bands.items()},
-        budget=int(budget),
-        band_ratios=band_ratios,
+    candidate_ids = [sample_id for sample_id in defer_set if sample_id in rows_by_id]
+    candidate_ids.sort(key=lambda sample_id: (-float(rows_by_id[sample_id].get("routing_score", 0.0) or 0.0), sample_id))
+    selected = k_center_greedy(
+        candidate_ids,
+        embeddings_by_id,
+        k=int(budget),
+        seed=seed,
     )
-    selected: list[str] = []
-    band_counts: dict[str, int] = {"B": 0, "M": 0, "F": 0}
-    for band in ("B", "M", "F"):
-        chosen = k_center_greedy(
-            bands[band],
-            embeddings_by_id,
-            k=quotas.get(band, 0),
-            seed=seed + {"B": 0, "M": 17, "F": 31}[band],
-        )
-        selected.extend(chosen)
-        band_counts[band] = len(chosen)
 
-    selected_set = set(selected)
-    # anchor 可以按比例自动计算，也可以由 CLI 显式传条数；显式条数优先。
-    # 如果传入 anchor_candidate_ids，则只会从用户缓存的候选集合中选择 anchor。
-    anchor_budget = (
-        int(max(0, anchor_count))
-        if anchor_count is not None
-        else int(math.floor(max(0.0, float(easy_anchor_ratio)) * int(budget)))
-    )
-    anchor_candidate_set = None if anchor_candidate_ids is None else {str(sample_id) for sample_id in anchor_candidate_ids}
-    anchor_candidates: list[tuple[float, str]] = []
-    for row in prediction_rows:
-        sample_id = _row_id(row)
-        if sample_id in blocked or sample_id in selected_set or sample_id in defer_set:
-            continue
-        if anchor_candidate_set is not None and sample_id not in anchor_candidate_set:
-            continue
-        if row.get("label", row.get("groundtruth")) is None:
-            continue
-        if _row_prediction(row) != _row_label(row):
-            continue
-        anchor_candidates.append((float(row.get("routing_score", 0.0) or 0.0), sample_id))
-    # Easy anchor 选择的是 student 高置信且预测正确的样本；
-    # 它们不来自 defer 集，只作为 LoRA 训练的轻量正则化项。
-    anchor_candidates.sort(key=lambda item: (-item[0], item[1]))
-    anchor_ids = [sample_id for _, sample_id in anchor_candidates[:anchor_budget]]
-
-    return DBDSSelection(
+    return DeferSelection(
         distillation_ids=selected,
-        anchor_ids=anchor_ids,
-        band_counts=band_counts,
         requested_budget=int(budget),
         selected_budget=len(selected),
-        anchor_budget=len(anchor_ids),
-        anchor_candidate_source=(
-            "cached_anchor_ids"
-            if anchor_candidate_set is not None
-            else "student_correct_high_confidence"
-        ),
     )
 
 
@@ -664,7 +837,7 @@ def teacher_weight(confidence: float, beta: float) -> float:
     """把 teacher 置信度转成训练样本权重。
 
     文档中的权重是 (c_T)^beta。数据文件若有 parsed_confidence 或
-    teacher_confidence，脚本层会传入这里；没有置信度时按 1.0 处理，
+    teacher_confidence，脚本层会传入这里；groundtruth置信度时按 1.0 处理，
     等价于 teacher 对离线标签完全确信。
     """
     value = max(0.0, min(1.0, float(confidence)))
@@ -786,8 +959,7 @@ def build_deployment_rows(
 __all__ = [
     "CRCResult",
     "CGSDEmbeddingError",
-    "DBDSSelection",
-    "DEFAULT_BAND_RATIOS",
+    "DeferSelection",
     "DEFAULT_LAMBDA_GRID",
     "DEFAULT_TEMPERATURE_GRID",
     "TemperatureChoice",
@@ -800,7 +972,7 @@ __all__ = [
     "crc_risk_bound",
     "evaluate_stop_criteria",
     "k_center_greedy",
-    "select_dbds_samples",
+    "select_defer_k_center_samples",
     "should_stop_after_round",
     "sigmoid_abs_margin",
     "split_calibration_pool_ids",

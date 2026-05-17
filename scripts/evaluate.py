@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""Evaluate a saved query-document relevance checkpoint."""
+"""评估已保存的 LoRA checkpoint（非 vLLM 路径）。
+
+该脚本直接加载 checkpoint 和 tokenizer，用 PyTorch DataLoader 计算
+accuracy/F1 等指标。若要评估 vLLM 全量推理结果，通常直接读取
+`*_student_predictions.jsonl` 统计，因为 vLLM 已经写出了 prediction/score。
+"""
 
 from __future__ import annotations
 
@@ -82,7 +87,7 @@ def build_dataloader(
     pin_memory: bool,
     max_tokens_per_batch: int = 0,
 ) -> DataLoader:
-    """Create a DataLoader with fast CUDA input settings when available."""
+    """构造 DataLoader，并在可用时启用 CUDA 输入加速选项。"""
     kwargs = {
         "dataset": dataset,
         "collate_fn": collator,
@@ -106,10 +111,10 @@ def build_dataloader(
 
 
 def load_tokenizer(checkpoint_dir: Path, model_path: str | Path | None) -> AutoTokenizer:
-    """Load tokenizer from checkpoint if available, otherwise from model path."""
+    """优先从 checkpoint 加载 tokenizer，否则回退到基座模型路径。"""
     source = checkpoint_dir
     try:
-        # Training saves tokenizer files beside the adapter checkpoint.
+        # 训练阶段会把 tokenizer 文件保存在 adapter checkpoint 旁边。
         tokenizer = AutoTokenizer.from_pretrained(
             source,
             trust_remote_code=True,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generate CGSD query-document pair embeddings for a JSONL dataset."""
+"""为 JSONL 数据生成 CGSD query-document pair embedding。"""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def resolve_torch_dtype(dtype_name: str, device: torch.device) -> torch.dtype:
 
 
 def last_token_pool(hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    """Pool the final non-padding token for right-padded decoder embeddings."""
+    """取右 padding 序列中最后一个非 padding token 的向量。"""
     if hidden_states.ndim != 3:
         raise ValueError(f"hidden_states must be rank 3, got shape {tuple(hidden_states.shape)}")
     if attention_mask.ndim != 2:
@@ -197,8 +197,27 @@ def pair_texts_for_row(
     return [format_pair_embedding_text(chunk, query) for chunk in chunks]
 
 
-def _existing_outputs(output_path: Path, ids_path: Path, meta_path: Path) -> list[Path]:
-    return [path for path in (output_path, ids_path, meta_path) if path.exists()]
+def _read_completed_embedding_ids(ids_path: Path) -> list[str]:
+    if not ids_path.exists():
+        return []
+    completed: list[str] = []
+    with ids_path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            if "id" not in payload:
+                raise ValueError(f"embedding id cache missing id at {ids_path}:{line_number}")
+            completed.append(str(payload["id"]))
+    return completed
+
+
+def _verify_resume_prefix(rows: list[dict[str, Any]], completed_ids: list[str], *, id_field: str) -> None:
+    if len(completed_ids) > len(rows):
+        raise ValueError(f"embedding id cache has {len(completed_ids)} rows, but data only has {len(rows)} rows")
+    expected_ids = [str(row[id_field]) for row in rows[: len(completed_ids)]]
+    if completed_ids != expected_ids:
+        raise ValueError("embedding id cache is not a prefix of the current data; pass --overwrite to rebuild")
 
 
 def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
@@ -206,9 +225,10 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
     output_path = resolve_output_path(args.output_path, PROJECT_ROOT)
     ids_path = resolve_output_path(args.ids_path, PROJECT_ROOT) if args.ids_path else output_path.with_suffix(".ids.jsonl")
     meta_path = resolve_output_path(args.meta_path, PROJECT_ROOT) if args.meta_path else output_path.with_suffix(".meta.json")
-    existing = _existing_outputs(output_path, ids_path, meta_path)
-    if existing and not bool(args.overwrite):
-        raise FileExistsError(f"embedding outputs already exist: {[str(path) for path in existing]}; pass --overwrite")
+    if bool(args.overwrite):
+        for path in (output_path, ids_path, meta_path):
+            if path.exists():
+                path.unlink()
 
     rows = read_jsonl(data_path, limit=args.limit)
     if not rows:
@@ -217,11 +237,15 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
     ids_path.parent.mkdir(parents=True, exist_ok=True)
 
     total_rows = len(rows)
+    completed_ids = _read_completed_embedding_ids(ids_path)
+    if output_path.exists() and not completed_ids and not bool(args.overwrite):
+        raise FileExistsError(f"embedding matrix exists without usable id cache: {output_path}; pass --overwrite to rebuild")
+    _verify_resume_prefix(rows, completed_ids, id_field=str(args.id_field))
     pending_texts: list[str] = []
     pending_spans: list[tuple[int, int]] = []
     pending_ids: list[str] = []
     cursor = 0
-    row_cursor = 0
+    row_cursor = len(completed_ids)
     memmap: np.memmap | None = None
     dimension: int | None = None
     request_count = 0
@@ -232,8 +256,19 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         device_name=str(args.device),
         dtype_name=str(args.torch_dtype),
     )
+    if row_cursor:
+        if not output_path.exists():
+            raise FileExistsError(f"embedding id cache exists but matrix is missing: {output_path}")
+        memmap = np.load(output_path, mmap_mode="r+")
+        if memmap.ndim != 2:
+            raise ValueError(f"embedding matrix must be rank 2, got shape {tuple(memmap.shape)}")
+        if int(memmap.shape[0]) != int(total_rows):
+            raise ValueError(f"embedding matrix row count mismatch: expected {total_rows} got {memmap.shape[0]}")
+        dimension = int(memmap.shape[1])
 
     progress = tqdm(total=total_rows, desc="fever embeddings", unit="row")
+    if row_cursor:
+        progress.update(row_cursor)
 
     def flush_pending() -> None:
         nonlocal pending_texts, pending_spans, pending_ids, cursor, row_cursor, memmap, dimension
@@ -280,13 +315,13 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         with ids_path.open("a", encoding="utf-8") as handle:
             for sample_id in batch_ids:
                 handle.write(json.dumps({"id": sample_id}, ensure_ascii=False) + "\n")
+            handle.flush()
+        memmap.flush()
         row_cursor = end
         progress.update(len(batch_rows))
 
-    if ids_path.exists():
-        ids_path.unlink()
-
-    for row in rows:
+    # ids_path 记录已经落盘的样本前缀；重启后直接从该前缀之后继续。
+    for row in rows[row_cursor:]:
         sample_id = str(row[args.id_field])
         formatted = pair_texts_for_row(
             row,

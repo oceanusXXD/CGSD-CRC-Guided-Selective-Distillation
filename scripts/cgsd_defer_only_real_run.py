@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run a real defer-only evaluation using existing CGSD checkpoints."""
+"""基于已有 CGSD checkpoint 跑真实 defer-only 评估。"""
 
 from __future__ import annotations
 

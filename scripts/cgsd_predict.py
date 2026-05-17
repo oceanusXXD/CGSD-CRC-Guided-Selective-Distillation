@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""对单个 CGSD round 执行 student 预测。"""
+"""对单个 CGSD round 执行非 vLLM student 预测。
+
+该脚本直接在当前 Python 进程中加载 Hugging Face 基座模型或 LoRA
+checkpoint，输出格式与 vLLM 预测脚本一致。它适合调试和较小规模评估；
+全量 pool 高吞吐推理优先使用 `cgsd_predict_vllm_openai.py`。
+"""
 
 from __future__ import annotations
 
@@ -62,6 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher_labels_path", default=None)
     parser.add_argument("--teacher_temperature", type=float, default=1.0)
     parser.add_argument("--all_predictions_path", default=None)
+    parser.add_argument("--partial_predictions_path", default=None)
     parser.add_argument("--calibration_predictions_path", default=None)
     parser.add_argument("--final_calibration_predictions_path", default=None)
     parser.add_argument("--pool_predictions_path", default=None)
@@ -105,6 +111,10 @@ def main() -> None:
         round_dir / "predict_train_label_snapshot.json",
     )
     usage_path = output_artifact_path(args.usage_path, round_dir / "predict_usage.json")
+    partial_predictions_path = output_artifact_path(
+        args.partial_predictions_path,
+        round_dir / "all_student_predictions.partial.jsonl",
+    )
     if args.show_result:
         print_existing_stage_result(stage_name="cgsd_predict", summary_path=usage_path)
         return
@@ -123,6 +133,8 @@ def main() -> None:
     if cache_decision.cache_hit:
         print_existing_stage_result(stage_name="cgsd_predict", summary_path=usage_path)
         return
+    if args.cache_policy == "overwrite" and partial_predictions_path.exists():
+        partial_predictions_path.unlink()
 
     round_dir.mkdir(parents=True, exist_ok=True)
     runtime_args = runtime_args_from_cli(args)
@@ -161,6 +173,8 @@ def main() -> None:
             torch_dtype=parse_torch_dtype(runtime_args.torch_dtype),
             model_path=model_path,
         )
+        if hasattr(model.backbone, "merge_and_unload"):
+            model.backbone = model.backbone.merge_and_unload()
     model.to(device)
 
     examples = load_stage_examples(
@@ -169,6 +183,8 @@ def main() -> None:
         document_field=args.document_field,
         label_field=args.label_field,
     )
+    # 每轮都写出三份固定切分：D_guide 用于中间 CRC，D_cert 只保留给
+    # 最终认证，pool 用于部署候选和 active selection。
     calibration_examples, pool_examples = split_examples(examples, split_payload)
     examples_by_id = {str(example.sample_id): example for example in examples}
     final_calibration_ids = [str(sample_id) for sample_id in split_payload.get("final_calibration_ids", [])]
@@ -196,6 +212,7 @@ def main() -> None:
         device=device,
         args=runtime_args,
         predictions_path=all_predictions_path,
+        partial_predictions_path=partial_predictions_path,
         round_index=args.round_index,
         teacher_labels_by_id=teacher_labels_by_id,
     )
@@ -221,6 +238,7 @@ def main() -> None:
             "groundtruth_substitute_calls": teacher_usage["groundtruth_substitute_calls"],
             "teacher_api_file_calls": teacher_usage["teacher_api_file_calls"],
             "all_predictions_path": str(all_predictions_path),
+            "partial_predictions_path": str(partial_predictions_path),
             "calibration_predictions_path": str(calibration_predictions_path),
             "final_calibration_predictions_path": str(final_calibration_predictions_path),
             "pool_predictions_path": str(pool_predictions_path),

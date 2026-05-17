@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""为 CGSD 实验 2 生成非 DBDS baseline 训练行。"""
+"""为 CGSD 实验 2 生成 baseline 训练行。"""
 
 from __future__ import annotations
 

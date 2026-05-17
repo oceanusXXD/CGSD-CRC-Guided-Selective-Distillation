@@ -1,10 +1,10 @@
-"""Training and evaluation loops."""
+"""训练、预测和评估循环。"""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from torch.utils.data import DataLoader
@@ -16,7 +16,6 @@ from .utils import count_parameters, move_batch_to_device, write_json, write_jso
 
 
 def get_single_token_id(tokenizer: Any, text: str) -> int:
-    """Return the token id for a single-token generation target."""
     token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
     if len(token_ids) != 1:
         raise ValueError(f"Expected {text!r} to encode to one token, got {token_ids}")
@@ -24,7 +23,6 @@ def get_single_token_id(tokenizer: Any, text: str) -> int:
 
 
 def last_non_padding_logits(logits: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    """Select logits at the final non-padding position for each row."""
     positions = torch.arange(logits.size(1), device=logits.device)
     positions = positions.unsqueeze(0).expand_as(attention_mask)
     last_indices = positions.masked_fill(attention_mask == 0, 0).max(dim=1).values
@@ -37,7 +35,6 @@ def build_optimizer(
     lr: float,
     weight_decay: float,
 ) -> torch.optim.Optimizer:
-    """Create AdamW over trainable parameters only."""
     parameters = [param for param in model.parameters() if param.requires_grad]
     if not parameters:
         raise ValueError("No trainable parameters found.")
@@ -54,7 +51,6 @@ def train_one_epoch(
     max_grad_norm: float = 1.0,
     class_token_weights: dict[int, float] | None = None,
 ) -> float:
-    """Train for one epoch and return average loss."""
     if gradient_accumulation_steps < 1:
         raise ValueError("gradient_accumulation_steps must be at least 1")
 
@@ -105,7 +101,6 @@ def evaluate_model(
     negative_token_text: str = "0",
     positive_token_text: str = "1",
 ) -> dict[str, Any]:
-    """Evaluate a model and return metrics."""
     if tokenizer is None:
         raise ValueError("Generative evaluation requires a tokenizer.")
 
@@ -189,8 +184,9 @@ def predict_model(
     negative_token_text: str = "0",
     positive_token_text: str = "1",
     predictions_path: str | Path | None = None,
+    row_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Run prompt-only binary scoring and return per-sample prediction rows."""
+    """只用 prompt 位置的 yes/no logits 打分，并返回逐样本预测行。"""
     model.eval()
     negative_token_id = get_single_token_id(tokenizer, negative_token_text)
     positive_token_id = get_single_token_id(tokenizer, positive_token_text)
@@ -244,6 +240,8 @@ def predict_model(
                     "score_source": score_source,
                 }
                 rows.append(row)
+                if row_callback is not None:
+                    row_callback(row)
                 if writer is not None:
                     writer.write(json.dumps(row, ensure_ascii=False))
                     writer.write("\n")
@@ -275,14 +273,13 @@ def fit(
     class_token_weights: dict[int, float] | None = None,
     scheduler_type: str = "linear",
 ) -> dict[str, Any]:
-    """Train a model and save a final checkpoint."""
     model.to(device)
     optimizer = build_optimizer(model, lr=lr, weight_decay=weight_decay)
 
     updates_per_epoch = (len(train_loader) + gradient_accumulation_steps - 1) // gradient_accumulation_steps
     total_training_steps = max(1, updates_per_epoch * epochs)
     warmup_steps = int(total_training_steps * warmup_ratio)
-    # Scheduler steps once per optimizer update, not once per dataloader batch.
+    # scheduler 按 optimizer update 计步，而不是按 dataloader batch 计步。
     if scheduler_type == "linear":
         scheduler = get_linear_schedule_with_warmup(
             optimizer,

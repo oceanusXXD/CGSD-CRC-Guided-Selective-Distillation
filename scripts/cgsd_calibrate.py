@@ -1,5 +1,11 @@
 #!/usr/bin/env python
-"""校准单个 CGSD round 的 CRC 阈值。"""
+"""校准单个 CGSD round 的 CRC 阈值。
+
+输入是预测脚本写出的 `calibration_student_predictions.jsonl` 和
+`pool_student_predictions.jsonl`。本脚本先在 D_guide 上扫描阈值
+`lambda`，选择满足有限样本修正风险 `<= alpha` 的最小可行阈值，
+再把同一阈值应用到 pool，写出 accept/defer 决策。
+"""
 
 from __future__ import annotations
 
@@ -33,6 +39,7 @@ from algorithms.cgsd import (
     evaluate_stop_criteria,
     summarize_crc_decisions,
 )
+from scripts.run_cgsd import load_embeddings
 from src.metrics import compute_binary_metrics
 from src.utils import read_json, write_json, write_jsonl
 
@@ -57,6 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_delta_defer_rate", type=float, default=0.005)
     parser.add_argument("--no_economic_stop", action="store_true", default=False)
     parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument("--embeddings_path", default=None)
     parser.add_argument("--usage_path", default=None)
     add_stage_cache_args(parser)
     return parser.parse_args()
@@ -116,7 +124,7 @@ def selected_count_for_stop(
     else:
         selection = previous_summary.get("selection", {})
     if isinstance(selection, dict) and selection:
-        return int(selection.get("selected_budget", 0) or 0) + int(selection.get("anchor_budget", 0) or 0)
+        return int(selection.get("selected_budget", 0) or 0)
     count = 0
     for row in train_rows:
         try:
@@ -157,6 +165,15 @@ def main() -> None:
 
     calibration_predictions = read_jsonl(calibration_predictions_path)
     pool_predictions = read_jsonl(pool_predictions_path)
+    # 传入 --embeddings_path 会启用 neighbor-support CRC：
+    # D_guide 既用于中间阈值校准，也作为 pool 决策时的局部支持参考库。
+    # D_cert 保存在 final_calibration_student_predictions.jsonl，必须隔离到
+    # 最终认证阶段，不能参与这里的中间阈值、defer 定义或选样。
+    embeddings_by_id = (
+        load_embeddings(input_artifact_path(args.embeddings_path, PROJECT_ROOT / str(args.embeddings_path)))
+        if args.embeddings_path
+        else None
+    )
 
     previous_summary_path = (
         input_artifact_path(
@@ -181,6 +198,7 @@ def main() -> None:
             calibration_predictions,
             alpha=float(args.alpha),
             temperature=temperature,
+            embeddings_by_id=embeddings_by_id,
         )
         temperature_payload = {
             "temperature": temperature,
@@ -193,16 +211,24 @@ def main() -> None:
             pool_predictions,
             alpha=float(args.alpha),
             temperatures=parse_float_csv(args.temperatures),
+            embeddings_by_id=embeddings_by_id,
         )
         temperature = float(temperature_choice.temperature)
         crc_result = temperature_choice.crc
         temperature_payload = temperature_choice.to_dict()
         temperature_payload["source"] = temperature_source
 
+    # apply_crc_decisions 会重新计算 routing_score，并在 NS 开启时为每条
+    # pool 样本写出自适应 decision_threshold。
     pool_decisions = apply_crc_decisions(
         pool_predictions,
         lambda_hat=crc_result.lambda_hat,
         temperature=temperature,
+        embeddings_by_id=embeddings_by_id,
+        # 中间轮的 neighbor support 以 D_guide 为参考库。
+        # 不要替换成 D_cert；D_cert 必须保留到最终认证阶段以保持隔离。
+        support_rows=calibration_predictions,
+        crc_result=crc_result,
     )
     summary = summarize_crc_decisions(pool_decisions)
     metrics = compute_binary_metrics(

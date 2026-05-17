@@ -1,4 +1,4 @@
-"""Shared utilities for training and evaluation."""
+"""训练、预测和评估共用工具。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import torch
 
 
 def set_seed(seed: int) -> None:
-    """Set Python, NumPy, and PyTorch seeds."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -21,14 +20,12 @@ def set_seed(seed: int) -> None:
 
 
 def get_device(device_name: str = "auto") -> torch.device:
-    """Resolve a torch device."""
     if device_name == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(device_name)
 
 
 def configure_torch_performance(enable_tf32: bool = True) -> None:
-    """Enable safe CUDA performance switches for training and evaluation."""
     if not torch.cuda.is_available():
         return
     if enable_tf32:
@@ -41,7 +38,6 @@ def configure_torch_performance(enable_tf32: bool = True) -> None:
 
 
 def parse_torch_dtype(dtype_name: str) -> torch.dtype | str | None:
-    """Parse a CLI dtype value for Transformers."""
     if dtype_name == "auto":
         return "auto"
     if dtype_name == "none":
@@ -56,7 +52,6 @@ def parse_torch_dtype(dtype_name: str) -> torch.dtype | str | None:
 
 
 def ensure_tokenizer_padding(tokenizer: Any) -> None:
-    """Ensure decoder-only tokenizers can pad batches."""
     if tokenizer.pad_token is None:
         if tokenizer.eos_token is None:
             raise ValueError("Tokenizer has neither pad_token nor eos_token.")
@@ -66,11 +61,11 @@ def ensure_tokenizer_padding(tokenizer: Any) -> None:
 
 
 def disable_tokenizer_thinking(tokenizer: Any) -> None:
-    """Remove chat-template thinking hooks from tokenizers saved in checkpoints.
+    """移除 checkpoint tokenizer 中可能遗留的 thinking chat template。
 
-    This project calls generate on plain query-document prompts, not chat
-    templates. Removing the template avoids accidentally enabling Qwen3
-    thinking mode if a checkpoint tokenizer is reused elsewhere.
+    本项目推理时直接构造 query-document prompt，不依赖 tokenizer 的 chat
+    template。清掉模板可以避免复用 checkpoint tokenizer 时意外打开 Qwen3
+    thinking mode。
     """
     if hasattr(tokenizer, "chat_template"):
         tokenizer.chat_template = None
@@ -80,7 +75,6 @@ def disable_tokenizer_thinking(tokenizer: Any) -> None:
 
 
 def move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
-    """Move tensor values in a batch to a torch device."""
     moved: dict[str, Any] = {}
     for key, value in batch.items():
         moved[key] = value.to(device, non_blocking=True) if torch.is_tensor(value) else value
@@ -88,13 +82,11 @@ def move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[st
 
 
 def read_json(path: str | Path) -> dict[str, Any]:
-    """Read a JSON object."""
     with Path(path).open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def write_json(data: dict[str, Any], path: str | Path) -> None:
-    """Write a JSON object with stable formatting."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w", encoding="utf-8") as handle:
@@ -103,7 +95,6 @@ def write_json(data: dict[str, Any], path: str | Path) -> None:
 
 
 def write_jsonl(rows: list[dict[str, Any]], path: str | Path) -> None:
-    """Write rows to a JSONL file."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w", encoding="utf-8") as handle:
@@ -113,7 +104,6 @@ def write_jsonl(rows: list[dict[str, Any]], path: str | Path) -> None:
 
 
 def resolve_input_path(path: str | Path, project_root: Path) -> Path:
-    """Resolve paths from cwd, project root, or workspace root."""
     candidate = Path(path)
     if candidate.is_absolute() or candidate.exists():
         return candidate
@@ -130,7 +120,6 @@ def resolve_input_path(path: str | Path, project_root: Path) -> Path:
 
 
 def resolve_output_path(path: str | Path, project_root: Path) -> Path:
-    """Resolve output paths without depending on the caller's cwd."""
     candidate = Path(path)
     if candidate.is_absolute():
         return candidate
@@ -140,7 +129,6 @@ def resolve_output_path(path: str | Path, project_root: Path) -> Path:
 
 
 def count_parameters(module: torch.nn.Module) -> dict[str, int]:
-    """Count total and trainable parameters."""
     total = sum(param.numel() for param in module.parameters())
     trainable = sum(param.numel() for param in module.parameters() if param.requires_grad)
     return {"total": total, "trainable": trainable}

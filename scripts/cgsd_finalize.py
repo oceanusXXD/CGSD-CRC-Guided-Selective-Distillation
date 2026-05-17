@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""根据已保存的 round 输出生成最终 CGSD 部署决策。"""
+"""根据已保存的 round 输出生成最终 CGSD 部署决策。
+
+该阶段不重新校准阈值，只读取某一轮的 `round_summary.json` 和
+`pool_crc_predictions.jsonl`：accept 样本采用小模型输出，defer 样本标记为
+需要 teacher 或外部系统处理。严格最终认证应另行使用 D_cert 校准阈值。
+"""
 
 from __future__ import annotations
 

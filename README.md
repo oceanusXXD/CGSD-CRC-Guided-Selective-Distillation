@@ -1,18 +1,17 @@
 # CGSD-CRC-Guided-Selective-Distillation
 
-本仓库实现和整理 **CGSD：CRC 引导的选择性蒸馏**。
+本仓库实现 **CGSD：CRC 引导的选择性蒸馏**。任务形式是二分类：
+给定 `query` 和 `document`，小模型判断文档是否满足 query，输出 `yes/no`
+或等价的 `1/0`。
 
-目标任务是二分类过滤：给定 `query` 和 `document`，判断文档是否满足查询条件。CGSD 让小模型先判断；当 CRC 校准认为小模型不够可靠时，再把样本交给教师模型或后续蒸馏流程处理。
+核心流程是：
 
-## 仓库内容
-
-- 核心算法：[algorithms/cgsd.py](algorithms/cgsd.py)
-- CGSD 分阶段命令行脚本：[scripts/](scripts)
-- 参数高效微调基线：[scripts/train.py](scripts/train.py)、[scripts/train_prefix_tuning.py](scripts/train_prefix_tuning.py)
-- 实验说明：[experiments/](experiments)
-- 本地 JSONL 数据：[datasets/](datasets)
-
-`outputs/`、模型权重、向量输出和教师接口输出不会提交到仓库。IMDb 的 JSONL 数据使用 Git LFS 管理。
+1. 小模型先对引导集、认证集和候选池做预测，并保存 yes/no logprob margin。
+2. CRC 用引导集校准 accept/defer 阈值。
+3. 从 defer 集里选样本标注，当前主策略是 k-Center Greedy。
+4. 用累计标注样本训练下一轮 LoRA。
+5. 循环到预算用完或 defer 率下降不明显。
+6. 最终用一直隔离的认证集做最终 CRC 认证。
 
 ## 环境
 
@@ -26,110 +25,324 @@ pip install -r requirements.txt
 model/qwen3-0.6b
 ```
 
-也可以在脚本里用 `--model_path` 指定其他路径。
+如果模型在别处，用各脚本的 `--model_path` 覆盖。
 
-## 数据格式
+## 数据与目录
 
 输入数据使用 JSONL，每行一个样本：
 
 ```json
-{"id":"q1__d2","query":"这篇文档是否相关？","document":"文档正文...","groundtruth":1}
+{"id":"sample_1","query":"Does the evidence support the claim?","document":"Claim: ... Evidence: ...","groundtruth":1}
 ```
 
-字段含义：
+必需字段：
 
-- `id`：稳定且唯一的样本 ID
-- `query`：过滤条件或查询文本
-- `document`：待判断文本
-- `groundtruth`：二分类标签，`1` 表示满足，`0` 表示不满足
+- `id`：稳定唯一 ID。
+- `query`：查询或判断条件。
+- `document`：待判断文档。
+- `groundtruth`：二分类标签，`1` 表示满足，`0` 表示不满足。
 
-当前仓库里的数据还包含对齐用字段：`query_id`、`document_id`、`review_id`、`parsed_answer`，部分文件还包含 `parsed_confidence`。训练和 CGSD 脚本默认只读取 `id/query/document/groundtruth`。
+推荐输出目录结构：
 
-## 当前数据
-
-| 文件 | 行数 | `groundtruth=0` | `groundtruth=1` |
-| --- | ---: | ---: | ---: |
-| `datasets/query_id_1.jsonl` | 9,297 | 8,716 | 581 |
-| `datasets/query_id_2.jsonl` | 9,297 | 3,538 | 5,759 |
-| `datasets/query_id_3.jsonl` | 9,297 | 6,903 | 2,394 |
-| `datasets/twitter_hate_query_id_1.jsonl` | 24,783 | 4,163 | 20,620 |
-| `datasets/imdb_query_id_1.jsonl` | 49,990 | 24,999 | 24,991 |
-| `datasets/imdb_query_id_2.jsonl` | 49,990 | 36,247 | 13,743 |
-| `datasets/imdb_query_id_3.jsonl` | 49,990 | 47,382 | 2,608 |
-
-配套的 `*.metadata.json` 记录了原始来源、query 过滤条件、标签分布和超过 2048 token 后被移除的样本数。IMDb 三个 JSONL 文件由 Git LFS 管理，首次克隆后需要确认 LFS 文件已拉取。
-
-CGSD 还需要覆盖全部样本 ID 的向量文件：
-
-```json
-{"id":"q1__d2","embedding":[0.12,-0.03,0.44]}
+```text
+experiments/runs/<task>/<run_name>/
+  cgsd_split_ids.json
+  cgsd_train_rows.jsonl
+  round_1/
+    all_student_predictions.jsonl
+    calibration_student_predictions.jsonl
+    final_calibration_student_predictions.jsonl
+    pool_student_predictions.jsonl
+    pool_crc_predictions.jsonl
+    selected_train_rows.jsonl
+    model/
+    round_summary.json
 ```
 
-当前仓库没有提交向量文件，需要在实验前按同一批 `id` 生成。教师标签文件可选；如果不提供，离线流程会用 `groundtruth` 作为教师标签替代。
+## 准备 split 和 embedding
 
-## 快速运行 CGSD
+先准备引导集、认证集和候选池 ID。`D_guide` 用于中间 CRC，`D_cert`
+只用于最终认证，不能参与中间选样或训练。
 
 ```bash
-export DATA=datasets/query_id_1.jsonl
-export EMB=datasets/query_id_1.embeddings.jsonl
-export MODEL=model/qwen3-0.6b
-export OUT=outputs/cgsd_q1
-
 python scripts/cgsd_prepare.py \
-  --data_path "$DATA" \
-  --embeddings_path "$EMB" \
-  --output_dir "$OUT" \
+  --data_path experiments/inputs/fever/data.jsonl \
+  --embeddings_path experiments/inputs/fever/embeddings.npy \
+  --output_dir experiments/runs/fever/example_run \
+  --embedding_dim 2560 \
   --n_calibration 200 \
+  --n_final_calibration 200 \
   --seed 1
-
-python scripts/cgsd_predict.py \
-  --output_dir "$OUT" \
-  --round_index 0 \
-  --model_path "$MODEL" \
-  --data_path "$DATA"
-
-python scripts/cgsd_calibrate.py \
-  --output_dir "$OUT" \
-  --round_index 0 \
-  --temperature 15 \
-  --alpha 0.07
-
-python scripts/cgsd_select.py \
-  --output_dir "$OUT" \
-  --round_index 0 \
-  --embeddings_path "$EMB" \
-  --budget 250
-
-python scripts/cgsd_train_round.py \
-  --output_dir "$OUT" \
-  --round_index 1 \
-  --model_path "$MODEL" \
-  --data_path "$DATA"
 ```
 
-训练下一轮后，需要重新执行预测和校准，再按实验要求继续选择样本或生成最终结果。
-
-正式实验建议每轮都对完整 `D_cal + U_pool` 重新预测；只对延迟集合重推理只能作为工程近似，前提是已经确认接受集合没有被 LoRA 训练破坏。
-
-## 实验入口
-
-详细实验要求写在各自文件夹的 README 中：
-
-- [01 核心有效性](experiments/01_core_effectiveness)
-- [02 选择策略对比](experiments/02_selection_comparison)
-- [03 标注预算曲线](experiments/03_budget_curve)
-- [04 消融实验](experiments/04_ablation)
-- [05 端到端系统对比](experiments/05_end_to_end_comparison)
-- [06 CRC 保证验证](experiments/06_crc_guarantee)
-- [07 三角关系验证](experiments/07_triangle_relation)
-- [08 LROBench 实验](experiments/08_lrobench)
-
-## 基础校验
+如果还没有 embedding，可先构建：
 
 ```bash
-python -m unittest tests.test_layer_contracts
-python scripts/cgsd_prepare.py --help
-python scripts/cgsd_calibrate.py --help
+python scripts/cgsd_build_embeddings.py \
+  --data_path experiments/inputs/fever/data.jsonl \
+  --output_path experiments/inputs/fever/embeddings.npy \
+  --ids_path experiments/inputs/fever/embeddings.ids.jsonl
 ```
 
-完整训练和评估需要本地模型与 GPU 资源。
+embedding 会按批写入 `.npy` memmap，并把已完成样本 ID 追加到
+`.ids.jsonl`。如果任务中断，保留这两个文件后重跑同一命令，会从
+已完成前缀之后继续；需要从头重建时再加 `--overwrite`。
+
+## 预测：非 vLLM
+
+`scripts/cgsd_predict.py` 在当前 Python 进程里加载 Hugging Face 模型或 LoRA。
+它适合小规模调试，输出和 vLLM 版本保持同一 JSONL 协议。
+
+```bash
+python scripts/cgsd_predict.py \
+  --output_dir experiments/runs/fever/example_run \
+  --round_index 1 \
+  --model_path /teamspace/studios/this_studio/model/qwen3-0.6b \
+  --data_path experiments/inputs/fever/data.jsonl \
+  --max_length 40960 \
+  --torch_dtype bfloat16 \
+  --cache_policy overwrite
+```
+
+非 vLLM 预测也会写 `all_student_predictions.partial.jsonl`。中断后重跑同一
+命令时会读取 partial，跳过已经完成的样本，并重新生成最终 JSONL。
+
+输出文件：
+
+- `all_student_predictions.jsonl`：引导集 + 认证集 + pool 的全量预测。
+- `calibration_student_predictions.jsonl`：中间 CRC 的引导集预测。
+- `final_calibration_student_predictions.jsonl`：最终认证集预测。
+- `pool_student_predictions.jsonl`：候选池预测。
+
+预测行里的核心字段：
+
+- `score`：`yes_logprob - no_logprob`，即 logit/logprob margin。
+- `prediction`：`score > 0` 为 `1`，否则为 `0`。
+- `probability`：有方向的 `sigmoid(score)`，不是 CRC 路由分数。
+
+## 预测：vLLM
+
+`scripts/cgsd_predict_vllm_openai.py` 通过 OpenAI-compatible vLLM server
+做高吞吐推理。推荐用于全量候选池。
+
+启动并托管 LoRA 的例子：
+
+```bash
+python scripts/cgsd_predict_vllm_openai.py \
+  --output_dir experiments/runs/fever/example_run \
+  --round_index 1 \
+  --model_path /teamspace/studios/this_studio/model/qwen3-0.6b \
+  --data_path experiments/inputs/fever/data.jsonl \
+  --start_server \
+  --base_url http://127.0.0.1:18021/v1 \
+  --lora_model_name example_run_round1 \
+  --parallel_requests 1024 \
+  --max_model_len 40960 \
+  --max_num_seqs 4096 \
+  --max_num_batched_tokens 524288 \
+  --gpu_memory_utilization 0.98 \
+  --temperature 0 \
+  --max_tokens 1 \
+  --top_logprobs 20 \
+  --cache_policy overwrite
+```
+
+这个脚本会：
+
+- 使用 `/no_think`，并向 vLLM 传 `enable_thinking=False`。
+- 读取第一个输出 token 位置的 `yes/no` logprob。
+- 写出 `score = yes_logprob - no_logprob`。
+- 用 partial JSONL 边推理边落盘，重跑时会跳过已完成样本。
+- 如果由脚本启动 server，结束时清理 vLLM 进程。
+
+如果已经手动启动好 vLLM server，就去掉 `--start_server`，并保证
+`--base_url` 和 `--lora_model_name/--served_model_name` 对应服务端模型名。
+
+## CRC 校准
+
+中间轮 CRC 使用 `D_guide` 的 `calibration_student_predictions.jsonl`
+校准阈值，再对 pool 写出 accept/defer 决策：
+
+```bash
+python scripts/cgsd_calibrate.py \
+  --output_dir experiments/runs/fever/example_run \
+  --round_index 1 \
+  --alpha 0.1 \
+  --temperature 15 \
+  --embeddings_path experiments/inputs/fever/embeddings.npy \
+  --cache_policy overwrite
+```
+
+核心计算在 `algorithms/cgsd.py`：
+
+- `routing_score = sigmoid(abs(score) / temperature)`。
+- 无 neighbor support 时：`routing_score >= lambda_hat` 则 accept。
+- 传入 `--embeddings_path` 时启用 neighbor support，自适应调整每条样本的
+  `decision_threshold`。
+- 风险修正为 `n/(n+1) * empirical_risk + 1/(n+1)`。
+
+主要输出：
+
+- `pool_crc_predictions.jsonl`：每条 pool 样本的 `routing_score`、
+  `decision_threshold`、`crc_decision`、`defer`。
+- `round_summary.json`：`lambda_hat`、`temperature`、`pool_summary`、
+  `pool_metrics`、停止判断。
+
+## 选数据
+
+主策略是从当前 defer 集里做 k-Center Greedy：
+
+```bash
+python scripts/cgsd_select.py \
+  --output_dir experiments/runs/fever/example_run \
+  --round_index 1 \
+  --embeddings_path experiments/inputs/fever/embeddings.npy \
+  --embedding_dim 2560 \
+  --budget 150 \
+  --seed 1 \
+  --cache_policy overwrite
+```
+
+逻辑：
+
+- 候选集来自 `pool_crc_predictions.jsonl` 中 `defer=true` 的样本。
+- 排除已经标注过的样本和引导集样本。
+- embedding 先单位归一化。
+- 第一个点选离 defer 候选质心最远的样本。
+- 后续每轮选“到已选集合最近距离最大”的样本。
+
+对照 baseline 可用：
+
+```bash
+python scripts/cgsd_make_baseline_rows.py \
+  --output_dir experiments/runs/fever/baseline_random \
+  --round_index 1 \
+  --strategy defer-random \
+  --budget 150 \
+  --pool_student_predictions_path experiments/runs/fever/baseline_random/round_1/pool_student_predictions.jsonl \
+  --pool_crc_predictions_path experiments/runs/fever/baseline_random/round_1/pool_crc_predictions.jsonl
+```
+
+支持的 baseline：`random`、`uncertainty`、`k-center`、`defer-random`。
+
+## 训练
+
+用累计的 `cgsd_train_rows.jsonl` 训练一个 LoRA round：
+
+```bash
+python scripts/cgsd_train_round.py \
+  --output_dir experiments/runs/fever/example_run \
+  --round_index 1 \
+  --model_path /teamspace/studios/this_studio/model/qwen3-0.6b \
+  --data_path experiments/inputs/fever/data.jsonl \
+  --mode lora_attention_mlp \
+  --lora_r 1 \
+  --lora_alpha 16 \
+  --lora_dropout 0.05 \
+  --lora_target_modules qv \
+  --lora_layer_scope all \
+  --lr 0.0002 \
+  --epochs 3 \
+  --batch_size 1 \
+  --gradient_accumulation_steps 16 \
+  --max_length 512 \
+  --cache_policy overwrite
+```
+
+输出：
+
+- `round_<n>/model/adapter/`：LoRA adapter。
+- `round_<n>/model/model_config.json`：训练超参和 label 分布。
+- `round_<n>/training_round_summary.json`：训练样本数和 checkpoint 路径。
+
+## 评估：非 vLLM
+
+`scripts/evaluate.py` 直接加载 checkpoint，在 PyTorch/HF 路径下评估：
+
+```bash
+python scripts/evaluate.py \
+  --checkpoint_dir experiments/runs/fever/example_run/round_1/model \
+  --model_path /teamspace/studios/this_studio/model/qwen3-0.6b \
+  --data_path experiments/inputs/fever/data.jsonl \
+  --max_length 40960 \
+  --batch_size 4 \
+  --predictions_path experiments/runs/fever/example_run/round_1/eval_predictions.jsonl \
+  --metrics_path experiments/runs/fever/example_run/round_1/eval_metrics.json
+```
+
+指标包括 `accuracy`、`precision`、`recall`、`f1`、`macro_F1`。
+
+## 评估：vLLM 预测文件
+
+vLLM 路径的评估通常直接基于预测 JSONL。下面的命令计算 accuracy、正类 F1、
+macro F1 和混淆矩阵：
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("experiments/runs/fever/example_run/round_1/pool_student_predictions.jsonl")
+tp = tn = fp = fn = n = 0
+for line in path.open():
+    row = json.loads(line)
+    y = int(row.get("label", row.get("groundtruth")))
+    p = int(row["prediction"]) if "prediction" in row else int(float(row["score"]) > 0)
+    n += 1
+    tp += y == 1 and p == 1
+    tn += y == 0 and p == 0
+    fp += y == 0 and p == 1
+    fn += y == 1 and p == 0
+
+acc = (tp + tn) / n
+precision = tp / (tp + fp) if tp + fp else 0.0
+recall = tp / (tp + fn) if tp + fn else 0.0
+f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+neg_precision = tn / (tn + fn) if tn + fn else 0.0
+specificity = tn / (tn + fp) if tn + fp else 0.0
+neg_f1 = 2 * neg_precision * specificity / (neg_precision + specificity) if neg_precision + specificity else 0.0
+print(json.dumps({
+    "n": n,
+    "accuracy": acc,
+    "f1": f1,
+    "macro_F1": (f1 + neg_f1) / 2,
+    "tp": tp,
+    "tn": tn,
+    "fp": fp,
+    "fn": fn,
+}, indent=2))
+PY
+```
+
+如果要评估 CRC 后的小模型+教师路由系统，用 `pool_crc_predictions.jsonl`
+或最终 `deployment_decisions.jsonl` 统计 accept/defer、teacher 调用量和最终输出。
+
+## 最终认证
+
+中间轮的 `round_summary.json` 用的是 `D_guide`，主要服务于选样和停止判断。
+最终数学认证应当在训练结束后，用最终模型对 `D_cert` 预测，再只用
+`final_calibration_student_predictions.jsonl` 做一次 CRC 校准，得到
+最终阈值 `lambda_hat*`。`D_cert` 在此之前不能参与训练、选样或中间 CRC。
+
+## 结束部署摘要
+
+根据某一轮 `round_summary.json` 和 `pool_crc_predictions.jsonl` 生成部署决策：
+
+```bash
+python scripts/cgsd_finalize.py \
+  --output_dir experiments/runs/fever/example_run \
+  --round_index 1
+```
+
+输出：
+
+- `deployment_decisions.jsonl`：accept 样本用小模型输出，defer 样本需要 teacher。
+- `cgsd_summary.json`：最终 round、阈值、defer 调用量和 checkpoint 路径。
+
+## 常用排错
+
+- `missing yes/no logprobs`：提高 `--top_logprobs`，确认 prompt 要求只输出 yes/no。
+- vLLM OOM：降低 `--parallel_requests`、`--max_num_seqs` 或
+  `--max_num_batched_tokens`。
+- k-Center 报 embedding 缺失：确认 embedding 文件覆盖所有 pool 样本 ID。
+- 最终认证不要复用中间 `round_summary.json` 的 `lambda_hat` 作为严格保证阈值。

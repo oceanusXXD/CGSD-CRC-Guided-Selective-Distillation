@@ -1,2 +1,1 @@
-"""Utilities for query-document relevance classification experiments."""
-
+"""query-document 二分类实验工具包。"""

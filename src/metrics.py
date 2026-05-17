@@ -1,4 +1,4 @@
-"""Binary classification metrics."""
+"""二分类指标。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ def compute_binary_metrics(
     scores: Iterable[float],
     threshold: float = 0.0,
 ) -> dict[str, float]:
-    """Compute binary classification metrics from positive-minus-negative scores."""
     label_list = [int(x) for x in labels]
     pred_list = [1 if float(score) > threshold else 0 for score in scores]
 

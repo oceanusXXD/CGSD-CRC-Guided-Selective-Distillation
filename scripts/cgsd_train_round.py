@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""用累计选中样本训练单个 CGSD LoRA round。"""
+"""用累计选中样本训练单个 CGSD LoRA round。
+
+训练输入是累计的 `cgsd_train_rows.jsonl`，而不是仅本轮新增样本。
+round 0 表示未训练基座模型，因此本脚本只允许训练 round >= 1。
+"""
 
 from __future__ import annotations
 
@@ -108,6 +112,7 @@ def main() -> None:
     round_dir.mkdir(parents=True, exist_ok=True)
     runtime_args = runtime_args_from_cli(args)
     configure_torch_performance(enable_tf32=runtime_args.tf32)
+    # 这里读取累计训练集：第一轮 250，后续轮会包含之前轮次已选样本。
     selected_rows = read_jsonl(train_rows_path) if args.train_rows_path else load_selected_train_rows(output_dir)
     if not selected_rows:
         raise RuntimeError(f"{train_rows_path} is empty; run cgsd_select.py first or pass --train_rows_path")

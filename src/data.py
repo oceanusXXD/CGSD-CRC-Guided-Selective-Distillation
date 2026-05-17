@@ -1,4 +1,4 @@
-"""Data loading for query-document binary relevance generation."""
+"""query-document 二分类生成任务的数据加载。"""
 
 from __future__ import annotations
 
@@ -16,8 +16,6 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class PairExample:
-    """One query-document relevance example."""
-
     sample_id: str
     query: str
     document: str
@@ -27,7 +25,7 @@ class PairExample:
 
 
 def format_query_document(query: str, document: str) -> str:
-    """Format a query-document pair with an explicit text boundary."""
+    """构造带显式边界的 query-document prompt。"""
     return (
         f"Query:\n{query}\n\n"
         f"Document:\n{document}\n\n"
@@ -36,7 +34,7 @@ def format_query_document(query: str, document: str) -> str:
 
 
 def format_cgsd_chat_prompt(query: str, document: str) -> str:
-    """Format the exact CGSD Qwen chat prompt before the assistant answer.
+    """构造 CGSD 使用的 Qwen chat prompt，停在 assistant 答案之前。
 
     CGSD 的 CRC 分数读取第一个 assistant output token 的 logits，因此
     prompt 必须停在 `<|im_start|>assistant\n` 后面，不能提前追加答案。
@@ -53,14 +51,14 @@ def format_cgsd_chat_prompt(query: str, document: str) -> str:
 
 
 def format_generation_answer(label: int) -> str:
-    """Format a binary label as a generation target token string."""
+    """把二分类标签转换为生成目标 token。"""
     if label not in {0, 1}:
         raise ValueError(f"Binary label must be 0 or 1, got: {label}")
     return str(label)
 
 
 def format_cgsd_chat_answer(label: int) -> str:
-    """Format the CGSD assistant answer supervised by LoRA SFT.
+    """构造 LoRA SFT 监督的 CGSD assistant 答案。
 
     文档要求 loss 只覆盖 assistant 回复部分，即 `yes/no` 和
     `<|im_end|>`；prompt 部分在 dataset 中会统一 mask 为 -100。
@@ -71,7 +69,6 @@ def format_cgsd_chat_answer(label: int) -> str:
 
 
 def discover_jsonl_files(path: str | Path) -> list[Path]:
-    """Find JSONL files from a file or directory path."""
     source = Path(path)
     if source.is_file():
         return [source]
@@ -84,7 +81,7 @@ def discover_jsonl_files(path: str | Path) -> list[Path]:
 
 
 def _parse_label(row: dict[str, Any], label_field: str) -> int:
-    """Parse supported label formats and enforce binary 0/1 labels."""
+    """解析支持的标签格式，并统一为 0/1。"""
     if label_field in row:
         value = row[label_field]
     elif "label" in row:
@@ -120,7 +117,6 @@ def load_examples(
     document_field: str = "document",
     label_field: str = "groundtruth",
 ) -> list[PairExample]:
-    """Load query-document examples from one JSONL file or a JSONL directory."""
     examples: list[PairExample] = []
     seen_ids: dict[str, str] = {}
     for file_path in discover_jsonl_files(data_path):
@@ -168,10 +164,9 @@ def split_examples(
     seed: int = 42,
     stratified: bool = True,
 ) -> tuple[list[PairExample], list[PairExample]]:
-    """Split examples into train and validation sets.
+    """切分训练集和验证集。
 
-    The default stratified split keeps both labels represented in validation
-    when both labels exist in the source data.
+    默认按标签分层，尽量保证验证集中仍包含源数据里的两类标签。
     """
     if val_ratio <= 0:
         return list(examples), []
@@ -211,11 +206,10 @@ def split_examples_three_way(
     stratified: bool = True,
     group_duplicates: bool = True,
 ) -> tuple[list[PairExample], list[PairExample], list[PairExample]]:
-    """Split examples into train, validation, and test sets.
+    """切分训练集、验证集和测试集。
 
-    The default is 10% train, 10% validation, and the remaining 80% test.
-    Splitting is stratified by label unless disabled. Duplicate query-document
-    pairs stay in the same split to avoid validation/test leakage.
+    默认 10% 训练、10% 验证、其余测试；除非显式关闭，否则按标签分层。
+    重复 query-document pair 会留在同一 split，避免验证/测试泄漏。
     """
     if train_ratio <= 0:
         raise ValueError("train_ratio must be greater than 0")
@@ -320,12 +314,11 @@ def filter_examples_by_ids(
     examples: list[PairExample],
     sample_ids: set[str],
 ) -> list[PairExample]:
-    """Return examples whose sample_id appears in sample_ids, preserving data order."""
     return [example for example in examples if example.sample_id in sample_ids]
 
 
 class GenerationQueryDocumentDataset(Dataset):
-    """Tokenized query-document generation dataset."""
+    """tokenized query-document 生成数据集。"""
 
     def __init__(
         self,
@@ -348,7 +341,6 @@ class GenerationQueryDocumentDataset(Dataset):
         return len(self.examples)
 
     def sequence_lengths(self) -> list[int]:
-        """Return encoded full-sequence lengths for token-budget batching."""
         if self._encoded_cache is not None:
             return [len(item["input_ids"]) for item in self._encoded_cache]
         return [len(self[index]["input_ids"]) for index in range(len(self))]
@@ -425,7 +417,7 @@ class GenerationQueryDocumentDataset(Dataset):
 
 
 class GenerationPairCollator:
-    """Pad generation batches and attach prompt-only inputs."""
+    """对生成 batch 做 padding，并附加 prompt-only 输入。"""
 
     def __init__(self, tokenizer: Any, pad_to_multiple_of: int | None = 8) -> None:
         self.tokenizer = tokenizer
@@ -486,7 +478,7 @@ class GenerationPairCollator:
 
 
 class TokenBudgetBatchSampler:
-    """Group similarly sized examples while respecting a max token budget."""
+    """按长度分组，同时限制每个 batch 的 token 预算。"""
 
     def __init__(
         self,

@@ -1,8 +1,7 @@
-"""Recompute CGSD CRC summaries from cached prediction JSONL files.
+"""基于已缓存预测文件重新计算 CGSD CRC 摘要。
 
-This utility does not call any model. It reloads cached calibration/pool
-predictions, recomputes CRC with a fixed temperature, and writes a compact
-summary for report generation.
+该工具不会调用模型，只重新读取 calibration/pool 预测 JSONL，用固定温度
+重算 CRC，并写出适合报告汇总的紧凑结果。
 """
 
 from __future__ import annotations
@@ -110,7 +109,7 @@ def recompute_round(
         "eval_prediction_rows": len(eval_rows),
         "calibration_prediction_rows": len(calibration_rows),
     }
-    # Backward-compatible aliases for older report snippets.
+    # 兼容旧报告片段中的字段名。
     summary["pool_metrics"] = metrics
     summary["pool_decision_summary"] = decision_summary
     summary["pool_wrong_accept_risk"] = summary["eval_wrong_accept_risk"]

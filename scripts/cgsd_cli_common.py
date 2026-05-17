@@ -412,7 +412,7 @@ def load_teacher_labels(path: str | Path, *, teacher_temperature: float = 1.0) -
 
 
 def apply_teacher_label(row: dict[str, Any], teacher_labels_by_id: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
-    """给单条预测结果附加 CRC、DBDS 和训练使用的 teacher 标签。"""
+    """给单条预测结果附加 CRC、选样和训练使用的 teacher 标签。"""
     sample_id = str(row.get("id", row.get("sample_id", "")))
     teacher_payload = (teacher_labels_by_id or {}).get(sample_id)
     if teacher_payload is not None:

@@ -93,8 +93,8 @@ def _embedding_ids_from_sidecar(path: Path, row_count: int) -> list[str]:
 def load_embeddings(path: Path) -> dict[str, np.ndarray]:
     """读取真实预计算 pair embedding。
 
-    文件必须覆盖所有样本 ID；缺失会在主流程中直接报错。这样 DBDS 的
-    k-Center 始终运行在文档要求的固定 query-aware embedding 空间，
+    文件必须覆盖所有样本 ID；缺失会在主流程中直接报错。这样 k-Center
+    始终运行在文档要求的固定 query-aware embedding 空间，
     不会退化成哈希、随机或其他启发式占位向量。
     """
     if path.suffix == ".npy":
@@ -266,6 +266,7 @@ def predict_examples(
     device: Any,
     args: Any,
     predictions_path: Path | None = None,
+    partial_predictions_path: Path | None = None,
     round_index: int | None = None,
     teacher_labels_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
@@ -276,8 +277,17 @@ def predict_examples(
     如果传入真实 teacher API/logit 文件，则用 teacher 输出作为监督标签；
     否则离线实验用 groundtruth 代替真实 API，置信度固定记为 1.0。
     """
+    if partial_predictions_path is None and predictions_path is not None:
+        partial_predictions_path = predictions_path.with_suffix(".partial.jsonl")
+    existing_by_id: dict[str, dict[str, Any]] = {}
+    if partial_predictions_path is not None and partial_predictions_path.exists():
+        for row in read_jsonl(partial_predictions_path):
+            sample_id = str(row.get("id", ""))
+            if sample_id:
+                existing_by_id[sample_id] = row
+    pending_examples = [example for example in examples if str(example.sample_id) not in existing_by_id]
     dataloader = build_dataloader(
-        examples,
+        pending_examples,
         tokenizer,
         max_length=args.max_length,
         batch_size=args.eval_batch_size,
@@ -288,19 +298,13 @@ def predict_examples(
         pad_to_multiple_of=args.pad_to_multiple_of,
         cache_tokenization=args.cache_tokenization,
     )
-    prediction_rows = predict_model(
-        model=model,
-        dataloader=dataloader,
-        device=device,
-        tokenizer=tokenizer,
-        threshold=args.threshold,
-        negative_token_text="no",
-        positive_token_text="yes",
-        predictions_path=None,
-    )
     metadata_by_id = {example.sample_id: example for example in examples}
-    merged: list[dict[str, Any]] = []
-    for row in prediction_rows:
+    partial_writer = None
+    if partial_predictions_path is not None:
+        partial_predictions_path.parent.mkdir(parents=True, exist_ok=True)
+        partial_writer = partial_predictions_path.open("a", encoding="utf-8")
+
+    def merge_prediction_row(row: dict[str, Any]) -> dict[str, Any]:
         example = metadata_by_id[str(row["id"])]
         item = dict(example.metadata)
         item.update(row)
@@ -313,7 +317,38 @@ def predict_examples(
         if round_index is not None:
             item["round_index"] = int(round_index)
         apply_teacher_label(item, teacher_labels_by_id)
-        merged.append(item)
+        return item
+
+    def append_partial(row: dict[str, Any]) -> None:
+        nonlocal partial_writer
+        if partial_writer is None:
+            return
+        item = merge_prediction_row(row)
+        existing_by_id[str(item["id"])] = item
+        partial_writer.write(json.dumps(item, ensure_ascii=False))
+        partial_writer.write("\n")
+        partial_writer.flush()
+
+    try:
+        # partial 文件保存已经合并元数据后的预测行；重跑时只补剩余样本。
+        prediction_rows = predict_model(
+            model=model,
+            dataloader=dataloader,
+            device=device,
+            tokenizer=tokenizer,
+            threshold=args.threshold,
+            negative_token_text="no",
+            positive_token_text="yes",
+            predictions_path=None,
+            row_callback=append_partial if partial_predictions_path is not None else None,
+        )
+    finally:
+        if partial_writer is not None:
+            partial_writer.close()
+    if partial_predictions_path is not None:
+        merged = [existing_by_id[str(example.sample_id)] for example in examples]
+    else:
+        merged = [merge_prediction_row(row) for row in prediction_rows]
     if predictions_path is not None:
         write_jsonl(merged, predictions_path)
     return merged

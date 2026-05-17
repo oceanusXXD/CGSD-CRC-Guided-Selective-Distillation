@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Train one query-document relevance experiment."""
+"""训练一个 query-document 二分类实验。"""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def apply_mode_speed_defaults(args: argparse.Namespace) -> None:
-    """Choose L4-friendly defaults while preserving explicit CLI overrides."""
+    """设置适合 L4 的默认 batch 参数，同时保留 CLI 显式覆盖。"""
     if args.batch_size is None:
         args.batch_size = 8
     if args.eval_batch_size is None:
@@ -108,12 +108,12 @@ def apply_mode_speed_defaults(args: argparse.Namespace) -> None:
 
 
 def count_labels(examples: list[PairExample]) -> dict[int, int]:
-    """Count binary labels in examples."""
+    """统计二分类标签分布。"""
     return dict(sorted(Counter(example.label for example in examples).items()))
 
 
 def compute_balanced_class_weights(examples: list[PairExample]) -> dict[int, float]:
-    """Return sklearn-style balanced class weights for binary labels."""
+    """计算 sklearn 风格的二分类 class weight。"""
     label_counts = Counter(example.label for example in examples)
     total = sum(label_counts.values())
     if total == 0:
@@ -125,7 +125,7 @@ def compute_balanced_class_weights(examples: list[PairExample]) -> dict[int, flo
 
 
 def build_class_token_weights(tokenizer: object, class_weights: dict[int, float]) -> dict[int, float]:
-    """Map binary class weights onto the tokenizer's answer token ids."""
+    """把 class weight 映射到答案 token id。"""
     return {
         get_single_token_id(tokenizer, str(label)): weight
         for label, weight in class_weights.items()
@@ -136,7 +136,7 @@ def apply_precomputed_split_ids(
     examples: list[PairExample],
     split_payload: dict[str, object],
 ) -> tuple[list[PairExample], list[PairExample], list[PairExample]]:
-    """Build train/val/test splits from an existing split_ids.json payload."""
+    """从已有 split_ids.json 构造 train/val/test split。"""
     by_id = {example.sample_id: example for example in examples}
 
     def resolve_split(name: str) -> list[PairExample]:
@@ -173,7 +173,7 @@ def build_dataloader(
     max_tokens_per_batch: int = 0,
     seed: int = 42,
 ) -> DataLoader:
-    """Create a DataLoader with fast CUDA input settings when available."""
+    """构造 DataLoader，并在可用时启用 CUDA 输入加速选项。"""
     kwargs = {"dataset": dataset, "collate_fn": collator, "num_workers": num_workers, "pin_memory": pin_memory}
     if max_tokens_per_batch > 0:
         kwargs["batch_sampler"] = TokenBudgetBatchSampler(

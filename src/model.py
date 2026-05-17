@@ -1,4 +1,4 @@
-"""Qwen causal LM with last-layer LoRA adaptation."""
+"""带 LoRA adapter 的 Qwen causal LM 封装。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ ALL_MODES = sorted(LORA_MODES)
 LAST_LAYER_LORA_PATTERN = "layers"
 LORA_LAYER_SCOPES = {"last1", "last4", "all"}
 
-# The experiment contract lives here so train/evaluate use the same mode mapping.
+# 训练和评估共用同一份 mode 映射，避免不同入口加载到不同 LoRA 结构。
 LORA_TARGET_GROUPS: dict[str, list[str]] = {
     "qv": ["q_proj", "v_proj"],
     "attention": ["q_proj", "k_proj", "v_proj", "o_proj"],
@@ -40,14 +40,13 @@ LORA_TARGETS: dict[str, list[str]] = {
 
 
 def set_use_cache_false(module: nn.Module) -> None:
-    """Disable cache flags on model configs that expose them."""
     config = getattr(module, "config", None)
     if config is not None and hasattr(config, "use_cache"):
         config.use_cache = False
 
 
 def get_last_layer_index_from_config(config: Any) -> int:
-    """Read the last transformer layer index from standard or Qwen3 text configs."""
+    """从标准配置或 Qwen3 text_config 读取最后一层编号。"""
     if hasattr(config, "num_hidden_layers"):
         return int(config.num_hidden_layers) - 1
     text_config = getattr(config, "text_config", None)
@@ -57,7 +56,7 @@ def get_last_layer_index_from_config(config: Any) -> int:
 
 
 def resolve_lora_layers_to_transform(config: Any, layer_scope: str) -> int | list[int] | None:
-    """Resolve LoRA layer scope to PEFT's layers_to_transform format."""
+    """把 LoRA 层范围转换为 PEFT 的 layers_to_transform。"""
     if layer_scope not in LORA_LAYER_SCOPES:
         raise ValueError(f"Unsupported LoRA layer scope: {layer_scope}")
     if layer_scope == "all":
@@ -75,12 +74,11 @@ def sparse_causal_lm_loss(
     class_token_weights: dict[int, float] | None = None,
     sample_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Compute causal LM loss only on supervised label positions.
+    """只在被监督的答案 token 位置计算 causal LM loss。
 
-    Transformers' default causal LM loss casts the full [batch, seq, vocab]
-    logits tensor to float32. This task supervises only the final answer token,
-    so selecting active shifted positions first preserves the same objective
-    while avoiding a large temporary allocation.
+    Transformers 默认 loss 会把完整 `[batch, seq, vocab]` logits 转成
+    float32。本任务只监督最后的答案 token，所以先取出有效位置再算 loss，
+    目标函数不变，但能避免大块临时显存分配。
     """
     shift_logits = logits[:, :-1, :]
     shift_labels = labels[:, 1:]
@@ -113,7 +111,7 @@ def sparse_causal_lm_loss(
 
 
 class QwenGenerativeModel(nn.Module):
-    """Causal LM that scores/generates a binary answer token with LoRA."""
+    """用 LoRA 生成/打分二分类答案 token 的 causal LM。"""
 
     def __init__(
         self,
@@ -158,7 +156,7 @@ class QwenGenerativeModel(nn.Module):
             loaded_model.config,
             self.lora_layer_scope,
         )
-        # PEFT adaptation: PEFT freezes the base model and enables LoRA weights.
+        # PEFT 会冻结基座模型，只训练 LoRA 权重。
         self.backbone = self._build_lora_backbone(
             base_model=loaded_model,
             adapter_path=adapter_path,
@@ -204,13 +202,14 @@ class QwenGenerativeModel(nn.Module):
         labels: Any | None = None,
         class_token_weights: dict[int, float] | None = None,
         sample_weights: Any | None = None,
-        **_: Any,
+        **kwargs: Any,
     ) -> Any:
         outputs = self.backbone(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=None,
             return_dict=True,
+            **kwargs,
         )
         if labels is None:
             return outputs
@@ -231,7 +230,6 @@ class QwenGenerativeModel(nn.Module):
         return self.backbone.generate(*args, **kwargs)
 
     def checkpoint_config(self) -> dict[str, Any]:
-        """Return the config needed to reload this experiment checkpoint."""
         return {
             "model_path": self.model_path,
             "mode": self.mode,
@@ -252,7 +250,6 @@ class QwenGenerativeModel(nn.Module):
         tokenizer: Any | None = None,
         extra_config: dict[str, Any] | None = None,
     ) -> None:
-        """Save config, tokenizer, and LoRA adapter."""
         target_dir = Path(output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -278,12 +275,11 @@ class QwenGenerativeModel(nn.Module):
         map_location: Any = "cpu",
         model_path: str | Path | None = None,
     ) -> "QwenGenerativeModel":
-        """Load a saved experiment checkpoint."""
         checkpoint_path = Path(checkpoint_dir)
         config = read_json(checkpoint_path / "model_config.json")
         mode = str(config["mode"])
         adapter_path = checkpoint_path / "adapter" if mode in LORA_MODES else None
-        # Evaluation can override the recorded model path when checkpoints move.
+        # checkpoint 移动后，评估入口可以覆盖原记录的 model_path。
         base_model_path = str(model_path) if model_path is not None else str(config["model_path"])
 
         def config_value(key: str, default: Any) -> Any:
