@@ -1,0 +1,27 @@
+{
+  "available": {
+    "pred0_label0": 65102,
+    "pred0_label1": 67053,
+    "pred1_label0": 3367,
+    "pred1_label1": 9288
+  },
+  "base_pred_counts": {
+    "0": 500,
+    "1": 500
+  },
+  "counts": {
+    "pred0_label0": 250,
+    "pred0_label1": 250,
+    "pred1_label0": 250,
+    "pred1_label1": 250
+  },
+  "excluded_ids": 20290,
+  "label_counts": {
+    "0": 500,
+    "1": 500
+  },
+  "name": "basepred_label_quad_balanced_1000_seed1",
+  "rows": 1000,
+  "seed": 1,
+  "target_per_bucket": 250
+}

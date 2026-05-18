@@ -1,0 +1,28 @@
+{
+  "accept_defer": {
+    "accept": 250,
+    "defer": 250
+  },
+  "counts": {
+    "pred0_label0": 125,
+    "pred0_label1": 125,
+    "pred1_label0": 125,
+    "pred1_label1": 125
+  },
+  "half_accept_defer": {
+    "accept": 126,
+    "defer": 124
+  },
+  "half_counts": {
+    "pred0_label0": 62,
+    "pred0_label1": 62,
+    "pred1_label0": 62,
+    "pred1_label1": 64
+  },
+  "halfepoch_train_rows": 250,
+  "name": "basepred_label_quad_balanced_500_seed1",
+  "rows": 500,
+  "seed": 1,
+  "source": "full_pool",
+  "target": "exact_four_cell_balance_125_each"
+}

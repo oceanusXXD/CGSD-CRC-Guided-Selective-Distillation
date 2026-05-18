@@ -1,0 +1,33 @@
+{
+  "cache": {
+    "action": "run",
+    "cache_hit": false,
+    "cache_policy": "overwrite",
+    "existing_outputs": [],
+    "missing_outputs": [
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/fever/round_0/pool_crc_predictions.jsonl",
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/fever/round_0/round_summary.json",
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/fever/round_0/calibrate_usage.json"
+    ],
+    "stage_name": "cgsd_calibrate"
+  },
+  "crc_calibration_rows": 200,
+  "estimated_crc_input_tokens": 86011,
+  "groundtruth_substitute_calls": 200,
+  "pool_crc_predictions_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/fever/round_0/pool_crc_predictions.jsonl",
+  "pool_decision_rows": 165047,
+  "round_index": 0,
+  "round_summary_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/fever/round_0/round_summary.json",
+  "stage_name": "cgsd_calibrate",
+  "student_model_calls": 0,
+  "teacher_api_file_calls": 0,
+  "teacher_label_usage": {
+    "estimated_completion_tokens": 200,
+    "estimated_prompt_tokens": 86011,
+    "groundtruth_substitute_calls": 200,
+    "purpose": "crc_calibration_teacher_labels",
+    "teacher_api_file_calls": 0,
+    "teacher_calls": 200,
+    "unknown_teacher_source_calls": 0
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "accept_fraction": 0.15,
+  "defer_fraction": 0.85,
+  "elapsed_seconds": 31.92,
+  "seed": 1,
+  "sets": {
+    "accept15_defer85_random_balanced_1000_seed1": {
+      "accept": 150,
+      "defer": 850,
+      "label_0": 500,
+      "label_1": 500,
+      "total": 1000
+    },
+    "accept15_defer85_random_balanced_500_seed1": {
+      "accept": 75,
+      "defer": 425,
+      "label_0": 250,
+      "label_1": 250,
+      "total": 500
+    },
+    "balanced_test_10000_seed1": {
+      "accept": 1579,
+      "defer": 8421,
+      "label_0": 5000,
+      "label_1": 5000,
+      "total": 10000
+    },
+    "full_random_balanced_1000_seed1": {
+      "accept": 149,
+      "defer": 851,
+      "label_0": 500,
+      "label_1": 500,
+      "total": 1000
+    },
+    "full_random_balanced_500_seed1": {
+      "accept": 81,
+      "defer": 419,
+      "label_0": 250,
+      "label_1": 250,
+      "total": 500
+    }
+  },
+  "source_paths": {
+    "data_path": "experiments/inputs/fever/data.jsonl",
+    "pool_crc_predictions_path": "experiments/inputs/fever/round_0/pool_crc_predictions.jsonl"
+  },
+  "stage_name": "cgsd_make_fever_balanced_subsets",
+  "test_size": 10000,
+  "train_sizes": [
+    500,
+    1000
+  ]
+}

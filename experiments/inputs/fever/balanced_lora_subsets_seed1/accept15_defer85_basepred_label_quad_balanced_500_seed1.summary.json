@@ -1,0 +1,28 @@
+{
+  "accept_defer": {
+    "accept": 75,
+    "defer": 425
+  },
+  "counts": {
+    "pred0_label0": 38,
+    "pred0_label1": 213,
+    "pred1_label0": 212,
+    "pred1_label1": 37
+  },
+  "half_accept_defer": {
+    "accept": 37,
+    "defer": 213
+  },
+  "half_counts": {
+    "pred0_label0": 19,
+    "pred0_label1": 107,
+    "pred1_label0": 106,
+    "pred1_label1": 18
+  },
+  "halfepoch_train_rows": 250,
+  "name": "accept15_defer85_basepred_label_quad_balanced_500_seed1",
+  "rows": 500,
+  "seed": 1,
+  "source": "accept15_defer85",
+  "target": "accept_75_defer_425_within_group_balanced"
+}

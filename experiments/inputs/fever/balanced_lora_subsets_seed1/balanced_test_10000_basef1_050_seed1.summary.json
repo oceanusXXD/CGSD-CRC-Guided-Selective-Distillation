@@ -1,0 +1,15 @@
+{
+  "base_accuracy": 0.6,
+  "base_f1": 0.5,
+  "base_fn": 3000,
+  "base_fp": 1000,
+  "base_pred_pos_rate": 0.3,
+  "base_tn": 4000,
+  "base_tp": 2000,
+  "count": 10000,
+  "excluded_train_ids": 999,
+  "label_0": 5000,
+  "label_1": 5000,
+  "name": "balanced_test_10000_basef1_050_seed1",
+  "source": "experiments/inputs/fever/round_0/all_student_predictions.jsonl"
+}
