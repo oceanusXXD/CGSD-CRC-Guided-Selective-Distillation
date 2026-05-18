@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.binary_protocol import normalize_binary_label  # noqa: E402
 from src.data import PairExample, filter_examples_by_ids, load_examples  # noqa: E402
 from src.utils import read_json, resolve_input_path, resolve_output_path, write_json  # noqa: E402
 
@@ -44,20 +45,8 @@ class StageCacheDecision:
 
 
 def binary_to_int(value: Any, *, field_name: str) -> int:
-    """把 yes/no/true/false/1/0 统一成整数 1/0。"""
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"yes", "y", "true", "1"}:
-            return 1
-        if normalized in {"no", "n", "false", "0"}:
-            return 0
-    try:
-        label = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be binary 0/1, got {value!r}") from exc
-    if label not in {0, 1}:
-        raise ValueError(f"{field_name} must be binary 0/1, got {value!r}")
-    return label
+    """把规范 1/0 统一成整数 1/0。"""
+    return normalize_binary_label(value, field_name=field_name)
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -257,7 +246,7 @@ def _first_present(row: dict[str, Any], field_names: Iterable[Any]) -> Any:
 
 
 def _teacher_logit_margin(row: dict[str, Any]) -> float | None:
-    """从常见 API 输出结构里提取 yes-vs-no teacher logit margin。"""
+    """从常见 API 输出结构里提取 1-vs-0 teacher logit margin。"""
     value = _first_present(
         row,
         (
@@ -272,10 +261,10 @@ def _teacher_logit_margin(row: dict[str, Any]) -> float | None:
 
     logits = _first_present(row, ("teacher_logits", "logits"))
     if isinstance(logits, dict):
-        yes_value = _first_present(logits, ("yes", "Yes", "1", 1))
-        no_value = _first_present(logits, ("no", "No", "0", 0))
-        if yes_value is not None and no_value is not None:
-            return float(yes_value) - float(no_value)
+        one_value = _first_present(logits, ("1", 1))
+        zero_value = _first_present(logits, ("0", 0))
+        if one_value is not None and zero_value is not None:
+            return float(one_value) - float(zero_value)
     return None
 
 
@@ -389,7 +378,7 @@ def _iter_teacher_json_rows(path: Path) -> Iterable[dict[str, Any]]:
 def load_teacher_labels(path: str | Path, *, teacher_temperature: float = 1.0) -> dict[str, dict[str, Any]]:
     """从 JSON/JSONL 读取真实 teacher API 输出。
 
-    真实 API 可以输出 `teacher_label`，也可以只输出 yes/no logit margin；
+    真实 API 可以输出 `teacher_label`，也可以只输出 1/0 logit margin；
     后者会用 margin 的符号得到标签，并用 sigmoid(abs(margin)/T) 得到
     teacher confidence。没有传这个文件时，预测阶段会用 groundtruth 代替
     真实 teacher API，并把 teacher confidence 固定为 1.0。
@@ -491,12 +480,12 @@ def runtime_args_from_cli(cli_args: argparse.Namespace) -> argparse.Namespace:
 
     return argparse.Namespace(
         max_length=int(value("max_length", 512)),
-        batch_size=int(value("batch_size", 16)),
+        batch_size=int(value("batch_size", 4)),
         eval_batch_size=int(value("eval_batch_size", 32)),
         epochs=int(value("epochs", 3)),
         lr=float(value("lr", 2e-4)),
         weight_decay=float(value("weight_decay", 0.01)),
-        gradient_accumulation_steps=int(value("gradient_accumulation_steps", 1)),
+        gradient_accumulation_steps=int(value("gradient_accumulation_steps", 4)),
         max_grad_norm=float(value("max_grad_norm", 1.0)),
         warmup_ratio=float(value("warmup_ratio", 0.1)),
         early_stopping_patience=value("early_stopping_patience", None),
@@ -513,7 +502,7 @@ def runtime_args_from_cli(cli_args: argparse.Namespace) -> argparse.Namespace:
         lora_r=int(value("lora_r", 1)),
         lora_alpha=int(value("lora_alpha", 16)),
         lora_dropout=float(value("lora_dropout", 0.05)),
-        lora_target_modules=str(value("lora_target_modules", "qv")),
+        lora_target_modules=str(value("lora_target_modules", "attention_mlp")),
         lora_layer_scope=str(value("lora_layer_scope", "all")),
         balance_train_classes=bool(value("balance_train_classes", False)),
         seed=int(value("seed", 42)),

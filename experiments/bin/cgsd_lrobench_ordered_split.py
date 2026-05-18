@@ -11,6 +11,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from src.binary_protocol import normalize_binary_label
+
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -23,11 +25,7 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def label_value(row: dict[str, Any]) -> int:
     value = row.get("groundtruth", row.get("label"))
-    if str(value) in {"1", "true", "True", "yes", "Yes"}:
-        return 1
-    if str(value) in {"0", "false", "False", "no", "No"}:
-        return 0
-    raise ValueError(f"unsupported label {value!r} for row {row.get('id')!r}")
+    return normalize_binary_label(value, field_name=f"label for row {row.get('id')!r}")
 
 
 def allocation_count(n: int, ratio: float) -> int:

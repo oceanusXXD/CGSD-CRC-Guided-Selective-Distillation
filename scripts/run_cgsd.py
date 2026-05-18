@@ -2,7 +2,7 @@
 """CGSD 单步 CLI 共享函数。
 
 本文件不再提供一体化流水线入口。各阶段必须通过
-`cgsd_prepare.py`、`cgsd_predict.py`、`cgsd_calibrate.py`、
+`cgsd_prepare.py`、`cgsd_predict_vllm_openai.py`、`cgsd_calibrate.py`、
 `cgsd_select.py`、`cgsd_train_round.py` 和 `cgsd_finalize.py`
 单独启动、单独停止、单独产出结果。
 """
@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.cgsd_cli_common import apply_teacher_label, binary_to_int, read_jsonl
+from src.binary_protocol import BINARY_NEGATIVE_TEXT, BINARY_POSITIVE_TEXT
 from src.data import (
     GenerationPairCollator,
     GenerationQueryDocumentDataset,
@@ -215,9 +216,8 @@ def get_single_token_id(tokenizer: Any, text: str) -> int:
 
 
 def build_class_token_weights(tokenizer: Any, class_weights: dict[int, float]) -> dict[int, float]:
-    # CGSD 对外标签统一是 1/0，但 Qwen chat 蒸馏协议的 assistant
-    # 回复仍是 yes/no token；类别权重必须绑定到实际参与 loss 的首个 token。
-    label_tokens = {0: "no", 1: "yes"}
+    # 类别权重必须绑定到实际参与 loss 的首个规范答案 token。
+    label_tokens = {0: BINARY_NEGATIVE_TEXT, 1: BINARY_POSITIVE_TEXT}
     return {get_single_token_id(tokenizer, label_tokens[int(label)]): weight for label, weight in class_weights.items()}
 
 
@@ -239,7 +239,7 @@ def build_dataloader(
         tokenizer=tokenizer,
         max_length=max_length,
         cache_tokenization=cache_tokenization,
-        input_format="cgsd_chat_yes_no_v1",
+        input_format="cgsd_chat_binary_v1",
     )
     kwargs: dict[str, Any] = {
         "dataset": dataset,
@@ -272,7 +272,7 @@ def predict_examples(
 ) -> list[dict[str, Any]]:
     """对一批样本执行 student 推理并合并原始元数据。
 
-    输出里的 `score` 是 log p(yes)-log p(no)，算法层会进一步用固定温度
+    输出里的 `score` 是 log p(1)-log p(0)，算法层会进一步用固定温度
     转成 CRC 需要的 routing score；写入工件的标签和预测统一是 1/0。
     如果传入真实 teacher API/logit 文件，则用 teacher 输出作为监督标签；
     否则离线实验用 groundtruth 代替真实 API，置信度固定记为 1.0。
@@ -337,8 +337,8 @@ def predict_examples(
             device=device,
             tokenizer=tokenizer,
             threshold=args.threshold,
-            negative_token_text="no",
-            positive_token_text="yes",
+            negative_token_text=BINARY_NEGATIVE_TEXT,
+            positive_token_text=BINARY_POSITIVE_TEXT,
             predictions_path=None,
             row_callback=append_partial if partial_predictions_path is not None else None,
         )
@@ -452,6 +452,6 @@ def train_round_model(
 if __name__ == "__main__":
     raise SystemExit(
         "scripts/run_cgsd.py 只提供 CGSD 单步 CLI 共享函数。"
-        "请分别运行 cgsd_prepare.py、cgsd_predict.py、cgsd_calibrate.py、"
+        "请分别运行 cgsd_prepare.py、cgsd_predict_vllm_openai.py、cgsd_calibrate.py、"
         "cgsd_select.py、cgsd_train_round.py、cgsd_finalize.py。"
     )

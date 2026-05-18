@@ -11,6 +11,8 @@ from typing import Any, Callable, TypeVar
 import torch
 from torch.utils.data import Dataset
 
+from .binary_protocol import BINARY_SYSTEM_PROMPT, binary_user_prompt, canonical_binary_answer, normalize_binary_label
+
 T = TypeVar("T")
 
 
@@ -26,11 +28,7 @@ class PairExample:
 
 def format_query_document(query: str, document: str) -> str:
     """构造带显式边界的 query-document prompt。"""
-    return (
-        f"Query:\n{query}\n\n"
-        f"Document:\n{document}\n\n"
-        "Output exactly one character: 1 or 0. Yes is 1, no is 0."
-    )
+    return f"{BINARY_SYSTEM_PROMPT}\n{binary_user_prompt(query, document)}"
 
 
 def format_cgsd_chat_prompt(query: str, document: str) -> str:
@@ -41,31 +39,25 @@ def format_cgsd_chat_prompt(query: str, document: str) -> str:
     """
     return (
         "<|im_start|>system\n"
-        'You are a precise classifier. Answer only "yes" or "no"./no_think<|im_end|>\n'
+        f"{BINARY_SYSTEM_PROMPT}<|im_end|>\n"
         "<|im_start|>user\n"
-        f"Query: {query}\n"
-        f"Document: {document}\n"
-        "Does the document satisfy the query?<|im_end|>\n"
+        f"{binary_user_prompt(query, document)}<|im_end|>\n"
         "<|im_start|>assistant\n"
     )
 
 
 def format_generation_answer(label: int) -> str:
     """把二分类标签转换为生成目标 token。"""
-    if label not in {0, 1}:
-        raise ValueError(f"Binary label must be 0 or 1, got: {label}")
-    return str(label)
+    return canonical_binary_answer(label)
 
 
 def format_cgsd_chat_answer(label: int) -> str:
     """构造 LoRA SFT 监督的 CGSD assistant 答案。
 
-    文档要求 loss 只覆盖 assistant 回复部分，即 `yes/no` 和
+    文档要求 loss 只覆盖 assistant 回复部分，即规范化的 `1/0` 和
     `<|im_end|>`；prompt 部分在 dataset 中会统一 mask 为 -100。
     """
-    if label not in {0, 1}:
-        raise ValueError(f"Binary label must be 0 or 1, got: {label}")
-    return ("yes" if int(label) == 1 else "no") + "<|im_end|>"
+    return canonical_binary_answer(label) + "<|im_end|>"
 
 
 def discover_jsonl_files(path: str | Path) -> list[Path]:
@@ -89,26 +81,11 @@ def _parse_label(row: dict[str, Any], label_field: str) -> int:
     elif "groundtruth" in row:
         value = row["groundtruth"]
     elif "parsed_answer" in row:
-        answer = str(row["parsed_answer"]).strip().lower()
-        if answer in {"yes", "true", "1"}:
-            return 1
-        if answer in {"no", "false", "0"}:
-            return 0
-        raise ValueError(f"Cannot parse parsed_answer as label: {row['parsed_answer']}")
+        return normalize_binary_label(row["parsed_answer"], field_name="parsed_answer")
     else:
         raise KeyError(f"Missing label field: {label_field}")
 
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"yes", "true", "1"}:
-            return 1
-        if normalized in {"no", "false", "0"}:
-            return 0
-
-    label = int(value)
-    if label not in {0, 1}:
-        raise ValueError(f"Binary label must be 0 or 1, got: {value}")
-    return label
+    return normalize_binary_label(value, field_name=label_field)
 
 
 def load_examples(
@@ -353,7 +330,7 @@ class GenerationQueryDocumentDataset(Dataset):
                 max_length=max(self.max_length - 1, 1),
                 padding=False,
             )
-        elif self.input_format == "cgsd_chat_yes_no_v1":
+        elif self.input_format == "cgsd_chat_binary_v1":
             # CGSD 手写 Qwen chat 模板，等价于文档中的 non-thinking mode
             # prompt。这里禁用额外 special tokens，避免在 assistant 上下文
             # 后插入 tokenizer 默认 BOS/EOS 破坏第一个输出 token 的位置。
@@ -380,7 +357,7 @@ class GenerationQueryDocumentDataset(Dataset):
         prompt_ids = self._encode_prompt(example)
         answer_text = (
             format_cgsd_chat_answer(example.label)
-            if self.input_format == "cgsd_chat_yes_no_v1"
+            if self.input_format == "cgsd_chat_binary_v1"
             else format_generation_answer(example.label)
         )
         answer_ids = self.tokenizer(

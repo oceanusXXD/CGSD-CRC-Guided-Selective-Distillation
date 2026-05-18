@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
+from .binary_protocol import BINARY_NEGATIVE_TEXT, BINARY_POSITIVE_TEXT, BINARY_SCORE_SOURCE
 from .metrics import compute_binary_metrics
 from .utils import count_parameters, move_batch_to_device, write_json, write_jsonl
 
@@ -98,8 +99,8 @@ def evaluate_model(
     threshold: float = 0.0,
     predictions_path: str | Path | None = None,
     tokenizer: Any | None = None,
-    negative_token_text: str = "0",
-    positive_token_text: str = "1",
+    negative_token_text: str = BINARY_NEGATIVE_TEXT,
+    positive_token_text: str = BINARY_POSITIVE_TEXT,
 ) -> dict[str, Any]:
     if tokenizer is None:
         raise ValueError("Generative evaluation requires a tokenizer.")
@@ -111,7 +112,7 @@ def evaluate_model(
     labels: list[int] = []
     scores: list[float] = []
     rows: list[dict[str, Any]] = []
-    score_source = f"{positive_token_text}_minus_{negative_token_text}_logit_margin"
+    score_source = BINARY_SCORE_SOURCE
 
     for batch in tqdm(dataloader, desc="eval", leave=False):
         sample_ids = list(batch.get("sample_ids", []))
@@ -140,15 +141,15 @@ def evaluate_model(
         labels.extend(batch_labels)
         scores.extend(batch_scores)
 
-        batch_no_logits = float_logits[:, 0].detach().cpu().tolist()
-        batch_yes_logits = float_logits[:, 1].detach().cpu().tolist()
-        for sample_id, label, score, probability, no_logit, yes_logit in zip(
+        batch_zero_logits = float_logits[:, 0].detach().cpu().tolist()
+        batch_one_logits = float_logits[:, 1].detach().cpu().tolist()
+        for sample_id, label, score, probability, zero_logit, one_logit in zip(
             sample_ids,
             batch_labels,
             batch_scores,
             probs,
-            batch_no_logits,
-            batch_yes_logits,
+            batch_zero_logits,
+            batch_one_logits,
         ):
             prediction = 1 if float(score) > threshold else 0
             rows.append(
@@ -156,11 +157,11 @@ def evaluate_model(
                     "id": sample_id,
                     "label": int(label),
                     "score": float(score),
-                    "no_logit": float(no_logit),
-                    "yes_logit": float(yes_logit),
+                    "zero_logit": float(zero_logit),
+                    "one_logit": float(one_logit),
                     "probability": float(probability),
                     "prediction": prediction,
-                    # 对外工件统一使用 1/0，避免模型协议里的 yes/no 泄漏到算法输入。
+                    # 对外工件统一使用 1/0，避免历史标签别名泄漏到算法输入。
                     "generated_text": str(int(prediction)),
                     "score_source": score_source,
                 }
@@ -181,17 +182,17 @@ def predict_model(
     device: torch.device,
     tokenizer: Any,
     threshold: float = 0.0,
-    negative_token_text: str = "0",
-    positive_token_text: str = "1",
+    negative_token_text: str = BINARY_NEGATIVE_TEXT,
+    positive_token_text: str = BINARY_POSITIVE_TEXT,
     predictions_path: str | Path | None = None,
     row_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """只用 prompt 位置的 yes/no logits 打分，并返回逐样本预测行。"""
+    """只用 prompt 位置的 1/0 logits 打分，并返回逐样本预测行。"""
     model.eval()
     negative_token_id = get_single_token_id(tokenizer, negative_token_text)
     positive_token_id = get_single_token_id(tokenizer, positive_token_text)
     rows: list[dict[str, Any]] = []
-    score_source = f"{positive_token_text}_minus_{negative_token_text}_logit_margin"
+    score_source = BINARY_SCORE_SOURCE
     writer = None
     if predictions_path is not None:
         target = Path(predictions_path)
@@ -216,26 +217,26 @@ def predict_model(
             probs = torch.softmax(float_logits, dim=-1)[:, 1].detach().cpu().tolist()
             batch_labels = batch["target_labels"].detach().cpu().int().tolist()
 
-            batch_no_logits = float_logits[:, 0].detach().cpu().tolist()
-            batch_yes_logits = float_logits[:, 1].detach().cpu().tolist()
-            for sample_id, label, score, probability, no_logit, yes_logit in zip(
+            batch_zero_logits = float_logits[:, 0].detach().cpu().tolist()
+            batch_one_logits = float_logits[:, 1].detach().cpu().tolist()
+            for sample_id, label, score, probability, zero_logit, one_logit in zip(
                 sample_ids,
                 batch_labels,
                 batch_scores,
                 probs,
-                batch_no_logits,
-                batch_yes_logits,
+                batch_zero_logits,
+                batch_one_logits,
             ):
                 prediction = 1 if float(score) > threshold else 0
                 row = {
                     "id": str(sample_id),
                     "label": int(label),
                     "score": float(score),
-                    "no_logit": float(no_logit),
-                    "yes_logit": float(yes_logit),
+                    "zero_logit": float(zero_logit),
+                    "one_logit": float(one_logit),
                     "probability": float(probability),
                     "prediction": int(prediction),
-                    # 对外工件统一使用 1/0，避免模型协议里的 yes/no 泄漏到算法输入。
+                    # 对外工件统一使用 1/0，避免历史标签别名泄漏到算法输入。
                     "generated_text": str(int(prediction)),
                     "score_source": score_source,
                 }

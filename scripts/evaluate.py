@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""评估已保存的 LoRA checkpoint（非 vLLM 路径）。
+"""评估已保存的 LoRA checkpoint。
 
 该脚本直接加载 checkpoint 和 tokenizer，用 PyTorch DataLoader 计算
-accuracy/F1 等指标。若要评估 vLLM 全量推理结果，通常直接读取
-`*_student_predictions.jsonl` 统计，因为 vLLM 已经写出了 prediction/score。
+accuracy/F1 等指标。若要评估已落盘的预测 JSONL，通常直接读取
+`*_student_predictions.jsonl` 统计即可。
 """
 
 from __future__ import annotations

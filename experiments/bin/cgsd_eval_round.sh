@@ -4,7 +4,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/cgsd_env.sh"
 ROUND="${ROUND:?set ROUND to the model round to evaluate, e.g. ROUND=1}"
 PREV_ROUND="${PREV_ROUND:-$((ROUND - 1))}"
 
-python scripts/cgsd_predict.py \
+python scripts/cgsd_predict_vllm_openai.py \
   --output_dir "$OUT" \
   --round_index "$ROUND" \
   --model_path "$MODEL" \
@@ -19,6 +19,7 @@ python scripts/cgsd_calibrate.py \
   --round_index "$ROUND" \
   --temperature "$TEMP" \
   --alpha "$ALPHA" \
+  --embeddings_path "$EMB" \
   --previous_round_summary_path "$OUT/round_$PREV_ROUND/round_summary.json" \
   --previous_selection_summary_path "$OUT/round_$PREV_ROUND/selection_summary.json" \
   --train_rows_path "$OUT/cgsd_train_rows.jsonl" \

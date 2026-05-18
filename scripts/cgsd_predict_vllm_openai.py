@@ -3,7 +3,7 @@
 
 该脚本负责高吞吐全量推理：对 D_guide、D_cert 和 pool 中的每个样本
 构造 query-document prompt，只生成 1 个 token，并读取首 token 位置
-`yes` 与 `no` 的 logprob。保存的 `score = yes_lp - no_lp` 是后续
+`1` 与 `0` 的 logprob。保存的 `score = one_lp - zero_lp` 是后续
 CRC 路由分数 `sigmoid(abs(score)/T)` 的原始 margin。
 
 vLLM 被放在独立 server 进程中，避免主预测进程直接 import vLLM CUDA
@@ -48,11 +48,12 @@ from scripts.cgsd_cli_common import (
     train_label_snapshot,
     write_stage_usage,
 )
+from src.binary_protocol import BINARY_SCORE_SOURCE, BINARY_SYSTEM_PROMPT, binary_user_prompt, normalize_binary_token
 from src.data import PairExample
 from src.utils import read_json, write_json, write_jsonl
 
 
-SCORE_SOURCE = "yes_minus_no_logprob_margin_vllm_openai"
+SCORE_SOURCE = f"{BINARY_SCORE_SOURCE}_vllm_openai"
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--served_model_name", default=None)
     parser.add_argument("--lora_model_name", default=None)
     parser.add_argument("--timeout", type=int, default=180)
-    parser.add_argument("--parallel_requests", type=int, default=256)
+    parser.add_argument("--parallel_requests", type=int, default=1024)
     parser.add_argument("--request_retries", type=int, default=3)
     parser.add_argument("--top_logprobs", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -91,9 +92,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server_log_path", default=None)
     parser.add_argument("--partial_predictions_path", default=None)
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.98)
-    parser.add_argument("--max_model_len", type=int, default=512)
+    parser.add_argument("--max_model_len", type=int, default=40960)
     parser.add_argument("--max_num_seqs", type=int, default=4096)
-    parser.add_argument("--max_num_batched_tokens", type=int, default=327680)
+    parser.add_argument("--max_num_batched_tokens", type=int, default=524288)
     parser.add_argument("--enforce_eager", action="store_true", default=True)
     parser.add_argument("--no_enforce_eager", dest="enforce_eager", action="store_false")
     add_stage_cache_args(parser)
@@ -212,67 +213,48 @@ def _wait_for_model(client: Any, *, model_name: str, timeout: int, proc: subproc
 
 
 def _messages(example: PairExample) -> list[dict[str, str]]:
-    """构造 Qwen chat prompt。
-
-    `/no_think` 与请求体中的 `enable_thinking=False` 同时使用，避免
-    thinking 内容挤占唯一输出 token；模型应只输出 yes 或 no。
-    """
+    """构造 Qwen chat prompt。"""
     return [
         {
             "role": "system",
-            "content": 'You are a precise classifier. Answer only "yes" or "no"./no_think',
+            "content": BINARY_SYSTEM_PROMPT,
         },
         {
             "role": "user",
-            "content": (
-                f"Query: {example.query}\n"
-                f"Document: {example.document}\n"
-                "Does the document satisfy the query?"
-            ),
+            "content": binary_user_prompt(example.query, example.document),
         },
     ]
 
 
 def _normalize_token(token: Any) -> str:
-    raw = str(token or "")
-    stripped = raw.strip().lower()
-    if stripped in {"yes", "y", "true", "1"}:
-        return "yes"
-    if stripped in {"no", "n", "false", "0"}:
-        return "no"
-    edge = "".join(ch for ch in stripped if ch.isalpha() or ch.isdigit())
-    if edge in {"yes", "y", "true", "1"}:
-        return "yes"
-    if edge in {"no", "n", "false", "0"}:
-        return "no"
-    return ""
+    return normalize_binary_token(token)
 
 
-def _collect_yes_no_logprobs(choice: Any) -> tuple[float | None, float | None]:
-    """从首个生成 token 的 top_logprobs 中提取 yes/no logprob。"""
+def _collect_binary_logprobs(choice: Any) -> tuple[float | None, float | None]:
+    """从首个生成 token 的 top_logprobs 中提取 1/0 logprob。"""
     content_items = list(getattr(getattr(choice, "logprobs", None), "content", []) or [])
     if not content_items:
         return None, None
     item = content_items[0]
-    yes_lp: float | None = None
-    no_lp: float | None = None
+    one_lp: float | None = None
+    zero_lp: float | None = None
     for candidate in list(getattr(item, "top_logprobs", []) or []):
         token_norm = _normalize_token(getattr(candidate, "token", ""))
         value = getattr(candidate, "logprob", None)
         if value is None:
             continue
-        if token_norm == "yes":
-            yes_lp = float(value) if yes_lp is None else max(yes_lp, float(value))
-        elif token_norm == "no":
-            no_lp = float(value) if no_lp is None else max(no_lp, float(value))
+        if token_norm == "one":
+            one_lp = float(value) if one_lp is None else max(one_lp, float(value))
+        elif token_norm == "zero":
+            zero_lp = float(value) if zero_lp is None else max(zero_lp, float(value))
     generated_norm = _normalize_token(getattr(item, "token", ""))
     generated_lp = getattr(item, "logprob", None)
     if generated_lp is not None:
-        if generated_norm == "yes" and yes_lp is None:
-            yes_lp = float(generated_lp)
-        if generated_norm == "no" and no_lp is None:
-            no_lp = float(generated_lp)
-    return yes_lp, no_lp
+        if generated_norm == "one" and one_lp is None:
+            one_lp = float(generated_lp)
+        if generated_norm == "zero" and zero_lp is None:
+            zero_lp = float(generated_lp)
+    return one_lp, zero_lp
 
 
 def _predict_one(
@@ -299,16 +281,16 @@ def _predict_one(
             )
             choice = response.choices[0]
             content = str(choice.message.content or "")
-            yes_lp, no_lp = _collect_yes_no_logprobs(choice)
-            if yes_lp is None and no_lp is None:
-                raise RuntimeError(f"missing yes/no logprobs for output={content!r}")
-            if yes_lp is None:
-                yes_lp = -100.0
-            if no_lp is None:
-                no_lp = -100.0
-            # score 是有方向的 yes-vs-no margin；CRC 的无方向确信度
+            one_lp, zero_lp = _collect_binary_logprobs(choice)
+            if one_lp is None and zero_lp is None:
+                raise RuntimeError(f"missing 1/0 logprobs for output={content!r}")
+            if one_lp is None:
+                one_lp = -100.0
+            if zero_lp is None:
+                zero_lp = -100.0
+            # score 是有方向的 1-vs-0 margin；CRC 的无方向确信度
             # 在 calibrate 阶段再统一转成 sigmoid(abs(score)/T)。
-            score = float(yes_lp) - float(no_lp)
+            score = float(one_lp) - float(zero_lp)
             probability = float(1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, score)))))
             prediction = 1 if score > 0.0 else 0
             row = dict(example.metadata)
@@ -320,8 +302,8 @@ def _predict_one(
                     "label": int(example.label),
                     "groundtruth": int(example.label),
                     "score": score,
-                    "no_logit": float(no_lp),
-                    "yes_logit": float(yes_lp),
+                    "zero_logit": float(zero_lp),
+                    "one_logit": float(one_lp),
                     "probability": probability,
                     "prediction": int(prediction),
                     "generated_text": str(int(prediction)),

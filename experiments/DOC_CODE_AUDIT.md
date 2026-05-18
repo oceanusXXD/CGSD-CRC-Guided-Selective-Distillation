@@ -21,7 +21,7 @@
 
 ## 代码和实验计划一致的部分
 
-1. Round0 zero-shot、后续 round LoRA checkpoint 推理都由 `cgsd_predict.py` 单独启动。
+1. Round0 zero-shot、后续 round LoRA checkpoint 推理都由 `cgsd_predict_vllm_openai.py` 单独启动。
 2. 每轮对 `D_cal + U_pool` 全量重推理，符合实验方案“第一版保守全量重推理”。
 3. `cgsd_prepare.py` 固定 calibration/pool split，`cgsd_select.py` 会排除 calibration 和已选样本。
 4. DBDS 按 B/M/F band 分样，并在 band 内用 k-Center Greedy。

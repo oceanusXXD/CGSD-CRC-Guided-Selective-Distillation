@@ -15,7 +15,7 @@ python scripts/cgsd_prepare.py \
   --seed "$SEED" \
   --cache_policy "$CACHE_POLICY"
 
-python scripts/cgsd_predict.py \
+python scripts/cgsd_predict_vllm_openai.py \
   --output_dir "$OUT" \
   --round_index "$ROUND" \
   --model_path "$MODEL" \
@@ -29,6 +29,7 @@ python scripts/cgsd_calibrate.py \
   --round_index "$ROUND" \
   --temperature "$TEMP" \
   --alpha "$ALPHA" \
+  --embeddings_path "$EMB" \
   --cache_policy "$CACHE_POLICY"
 
 printf 'round0 eval complete: %s\n' "$OUT"

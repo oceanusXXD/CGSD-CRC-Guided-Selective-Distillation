@@ -1,12 +1,12 @@
 # CGSD-CRC-Guided-Selective-Distillation
 
 本仓库实现 **CGSD：CRC 引导的选择性蒸馏**。任务形式是二分类：
-给定 `query` 和 `document`，小模型判断文档是否满足 query，输出 `yes/no`
-或等价的 `1/0`。
+给定 `query` 和 `document`，小模型判断文档是否满足 query，统一输出
+`1/0`：`1` 表示满足，`0` 表示不满足。
 
 核心流程是：
 
-1. 小模型先对引导集、认证集和候选池做预测，并保存 yes/no logprob margin。
+1. 小模型先对引导集、认证集和候选池做预测，并保存 `1/0` logprob margin。
 2. CRC 用引导集校准 accept/defer 阈值。
 3. 从 defer 集里选样本标注，当前主策略是 k-Center Greedy。
 4. 用累计标注样本训练下一轮 LoRA。
@@ -88,44 +88,10 @@ embedding 会按批写入 `.npy` memmap，并把已完成样本 ID 追加到
 `.ids.jsonl`。如果任务中断，保留这两个文件后重跑同一命令，会从
 已完成前缀之后继续；需要从头重建时再加 `--overwrite`。
 
-## 预测：非 vLLM
+## 预测
 
-`scripts/cgsd_predict.py` 在当前 Python 进程里加载 Hugging Face 模型或 LoRA。
-它适合小规模调试，输出和 vLLM 版本保持同一 JSONL 协议。
-
-```bash
-python scripts/cgsd_predict.py \
-  --output_dir experiments/runs/fever/example_run \
-  --round_index 1 \
-  --model_path /teamspace/studios/this_studio/model/qwen3-0.6b \
-  --data_path experiments/inputs/fever/data.jsonl \
-  --max_length 40960 \
-  --torch_dtype bfloat16 \
-  --cache_policy overwrite
-```
-
-非 vLLM 预测也会写 `all_student_predictions.partial.jsonl`。中断后重跑同一
-命令时会读取 partial，跳过已经完成的样本，并重新生成最终 JSONL。
-
-输出文件：
-
-- `all_student_predictions.jsonl`：引导集 + 认证集 + pool 的全量预测。
-- `calibration_student_predictions.jsonl`：中间 CRC 的引导集预测。
-- `final_calibration_student_predictions.jsonl`：最终认证集预测。
-- `pool_student_predictions.jsonl`：候选池预测。
-
-预测行里的核心字段：
-
-- `score`：`yes_logprob - no_logprob`，即 logit/logprob margin。
-- `prediction`：`score > 0` 为 `1`，否则为 `0`。
-- `probability`：有方向的 `sigmoid(score)`，不是 CRC 路由分数。
-
-## 预测：vLLM
-
-`scripts/cgsd_predict_vllm_openai.py` 通过 OpenAI-compatible vLLM server
-做高吞吐推理。推荐用于全量候选池。
-
-启动并托管 LoRA 的例子：
+`scripts/cgsd_predict_vllm_openai.py` 通过 OpenAI-compatible vLLM server 做高吞吐推理。
+这是唯一的 CGSD student 推理入口，避免多套预测实现产生协议漂移。
 
 ```bash
 python scripts/cgsd_predict_vllm_openai.py \
@@ -135,7 +101,6 @@ python scripts/cgsd_predict_vllm_openai.py \
   --data_path experiments/inputs/fever/data.jsonl \
   --start_server \
   --base_url http://127.0.0.1:18021/v1 \
-  --lora_model_name example_run_round1 \
   --parallel_requests 1024 \
   --max_model_len 40960 \
   --max_num_seqs 4096 \
@@ -147,16 +112,21 @@ python scripts/cgsd_predict_vllm_openai.py \
   --cache_policy overwrite
 ```
 
-这个脚本会：
+预测也会写 `all_student_predictions.partial.jsonl`。中断后重跑同一
+命令时会读取 partial，跳过已经完成的样本，并重新生成最终 JSONL。
 
-- 使用 `/no_think`，并向 vLLM 传 `enable_thinking=False`。
-- 读取第一个输出 token 位置的 `yes/no` logprob。
-- 写出 `score = yes_logprob - no_logprob`。
-- 用 partial JSONL 边推理边落盘，重跑时会跳过已完成样本。
-- 如果由脚本启动 server，结束时清理 vLLM 进程。
+输出文件：
 
-如果已经手动启动好 vLLM server，就去掉 `--start_server`，并保证
-`--base_url` 和 `--lora_model_name/--served_model_name` 对应服务端模型名。
+- `all_student_predictions.jsonl`：引导集 + 认证集 + pool 的全量预测。
+- `calibration_student_predictions.jsonl`：中间 CRC 的引导集预测。
+- `final_calibration_student_predictions.jsonl`：最终认证集预测。
+- `pool_student_predictions.jsonl`：候选池预测。
+
+预测行里的核心字段：
+
+- `score`：`1_logprob - 0_logprob`，即 logit/logprob margin。
+- `prediction`：`score > 0` 为 `1`，否则为 `0`。
+- `probability`：有方向的 `sigmoid(score)`，不是 CRC 路由分数。
 
 ## CRC 校准
 
@@ -235,16 +205,15 @@ python scripts/cgsd_train_round.py \
   --round_index 1 \
   --model_path /teamspace/studios/this_studio/model/qwen3-0.6b \
   --data_path experiments/inputs/fever/data.jsonl \
-  --mode lora_attention_mlp \
   --lora_r 1 \
   --lora_alpha 16 \
   --lora_dropout 0.05 \
-  --lora_target_modules qv \
+  --lora_target_modules attention_mlp \
   --lora_layer_scope all \
   --lr 0.0002 \
   --epochs 3 \
-  --batch_size 1 \
-  --gradient_accumulation_steps 16 \
+  --batch_size 4 \
+  --gradient_accumulation_steps 4 \
   --max_length 512 \
   --cache_policy overwrite
 ```
@@ -255,7 +224,7 @@ python scripts/cgsd_train_round.py \
 - `round_<n>/model/model_config.json`：训练超参和 label 分布。
 - `round_<n>/training_round_summary.json`：训练样本数和 checkpoint 路径。
 
-## 评估：非 vLLM
+## 评估
 
 `scripts/evaluate.py` 直接加载 checkpoint，在 PyTorch/HF 路径下评估：
 
@@ -272,9 +241,9 @@ python scripts/evaluate.py \
 
 指标包括 `accuracy`、`precision`、`recall`、`f1`、`macro_F1`。
 
-## 评估：vLLM 预测文件
+## 评估：预测文件
 
-vLLM 路径的评估通常直接基于预测 JSONL。下面的命令计算 accuracy、正类 F1、
+已落盘预测 JSONL 可以直接计算 accuracy、正类 F1、
 macro F1 和混淆矩阵：
 
 ```bash
@@ -341,8 +310,6 @@ python scripts/cgsd_finalize.py \
 
 ## 常用排错
 
-- `missing yes/no logprobs`：提高 `--top_logprobs`，确认 prompt 要求只输出 yes/no。
-- vLLM OOM：降低 `--parallel_requests`、`--max_num_seqs` 或
-  `--max_num_batched_tokens`。
+- `missing 1/0 logprobs`：提高 `--top_logprobs`，确认 prompt 要求只输出 1/0。
 - k-Center 报 embedding 缺失：确认 embedding 文件覆盖所有 pool 样本 ID。
 - 最终认证不要复用中间 `round_summary.json` 的 `lambda_hat` 作为严格保证阈值。
