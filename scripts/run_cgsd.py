@@ -318,7 +318,6 @@ def predict_examples(
             item["round_index"] = int(round_index)
         apply_teacher_label(item, teacher_labels_by_id)
         return item
-
     def append_partial(row: dict[str, Any]) -> None:
         nonlocal partial_writer
         if partial_writer is None:

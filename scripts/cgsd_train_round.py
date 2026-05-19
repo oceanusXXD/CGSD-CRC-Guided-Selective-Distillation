@@ -42,6 +42,7 @@ from src.utils import (
     ensure_tokenizer_padding,
     get_device,
     read_json,
+    set_seed,
     write_json,
     write_jsonl,
 )
@@ -111,6 +112,7 @@ def main() -> None:
 
     round_dir.mkdir(parents=True, exist_ok=True)
     runtime_args = runtime_args_from_cli(args)
+    set_seed(int(runtime_args.seed))
     configure_torch_performance(enable_tf32=runtime_args.tf32)
     # 这里读取累计训练集：第一轮 250，后续轮会包含之前轮次已选样本。
     selected_rows = read_jsonl(train_rows_path) if args.train_rows_path else load_selected_train_rows(output_dir)
@@ -147,6 +149,8 @@ def main() -> None:
     calibration_ids = set(split_payload["calibration_ids"])
     calibration_examples = filter_examples_by_ids(all_examples, calibration_ids)
     device = get_device(args.device)
+    run_config = vars(args)
+    run_config["seed"] = int(runtime_args.seed)
     model = train_round_model(
         train_examples=train_examples,
         eval_examples=calibration_examples,
@@ -157,7 +161,7 @@ def main() -> None:
         device=device,
         args=runtime_args,
         round_index=args.round_index,
-        run_config=vars(args),
+        run_config=run_config,
     )
     model.to("cpu")
     label_snapshot = train_label_snapshot(selected_rows)

@@ -35,6 +35,28 @@ def _choose_random(ids: list[str], *, k: int, seed: int) -> list[str]:
     return shuffled[: int(k)]
 
 
+def pool_crc_defer_rate(rows: list[dict[str, Any]]) -> float:
+    """Return the CRC-identified defer rate in a pool prediction file."""
+    if not rows:
+        raise ValueError("pool CRC predictions cannot be empty")
+    return sum(1 for row in rows if bool(row.get("defer", False))) / len(rows)
+
+
+def accept_fraction_from_crc_defer_rate(defer_rate: float) -> float:
+    """Compute pi_accept(r) where pi_defer(r) = r + (1-r)^2."""
+    r = float(defer_rate)
+    if not 0.0 <= r <= 1.0:
+        raise ValueError("crc defer rate must be in [0, 1]")
+    pi_defer = r + (1.0 - r) ** 2
+    return max(0.0, min(1.0, 1.0 - pi_defer))
+
+
+def format_accept_defer_name(accept_fraction: float) -> str:
+    accept_pct = int(round(float(accept_fraction) * 100))
+    defer_pct = 100 - accept_pct
+    return f"accept{accept_pct}_defer{defer_pct}"
+
+
 def _materialize_train_rows(
     ids: list[str],
     *,
@@ -96,6 +118,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final_calibration_predictions_path", default="experiments/inputs/fever/round_0/final_calibration_student_predictions.jsonl")
     parser.add_argument("--output_dir", default="experiments/inputs/fever/fixed_sets_alpha010_t15_seed1_round0_accept15_defer85_random")
     parser.add_argument("--sizes", default="500,1000,2500,5000,20000")
+    parser.add_argument("--accept_fraction_mode", choices=("fixed", "crc_formula"), default="fixed")
     parser.add_argument("--accept_fraction", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--teacher_beta", type=float, default=1.0)
@@ -108,11 +131,17 @@ def main() -> None:
     args = parse_args()
     started = time.time()
     sizes = parse_sizes(args.sizes)
-    accept_fraction = float(args.accept_fraction)
-    if not 0.0 <= accept_fraction <= 1.0:
-        raise ValueError("--accept_fraction must be in [0, 1]")
 
     pool_rows = read_jsonl(args.pool_crc_predictions_path)
+    observed_defer_rate = pool_crc_defer_rate(pool_rows)
+    if args.accept_fraction_mode == "crc_formula":
+        accept_fraction = accept_fraction_from_crc_defer_rate(observed_defer_rate)
+    else:
+        accept_fraction = float(args.accept_fraction)
+    if not 0.0 <= accept_fraction <= 1.0:
+        raise ValueError("--accept_fraction must be in [0, 1]")
+    ratio_name = format_accept_defer_name(accept_fraction)
+
     rows_by_id = {_row_id(row): dict(row) for row in pool_rows}
     blocked_ids: set[str] = set()
     if not bool(args.no_block_calibration):
@@ -133,9 +162,9 @@ def main() -> None:
         defer_selected = _choose_random(defer_ids, k=defer_count, seed=int(args.seed) + int(size) * 2 + 1)
         merged_ids = accept_selected + defer_selected
 
-        accept_name = f"round0_accept_random_{accept_count}_of_{size}_accept15_defer85_seed{args.seed}"
-        defer_name = f"round0_defer_random_{defer_count}_of_{size}_accept15_defer85_seed{args.seed}"
-        merged_name = f"round0_accept15_defer85_random_{size}_seed{args.seed}"
+        accept_name = f"round0_accept_random_{accept_count}_of_{size}_{ratio_name}_seed{args.seed}"
+        defer_name = f"round0_defer_random_{defer_count}_of_{size}_{ratio_name}_seed{args.seed}"
+        merged_name = f"round0_{ratio_name}_random_{size}_seed{args.seed}"
 
         if bool(args.write_component_sets):
             for name, ids in ((accept_name, accept_selected), (defer_name, defer_selected)):
@@ -150,7 +179,7 @@ def main() -> None:
         train_rows = _materialize_train_rows(
             merged_ids,
             rows_by_id=rows_by_id,
-            selection_role="round0_accept15_defer85_random",
+            selection_role=f"round0_{ratio_name}_random",
             teacher_beta=float(args.teacher_beta),
         )
         write_jsonl(train_rows, output_dir / f"{merged_name}.train_rows.jsonl")
@@ -163,8 +192,16 @@ def main() -> None:
     summary = {
         "stage_name": "cgsd_make_fever_round0_accept_defer_random_sets",
         "seed": int(args.seed),
+        "accept_fraction_mode": str(args.accept_fraction_mode),
+        "accept_defer_ratio_name": ratio_name,
         "accept_fraction": accept_fraction,
         "defer_fraction": 1.0 - accept_fraction,
+        "observed_pool_crc_defer_rate": observed_defer_rate,
+        "crc_formula": {
+            "pi_defer": "r + (1-r)^2",
+            "pi_accept": "1 - pi_defer",
+            "r_source": "pool_crc_predictions defer field",
+        },
         "sizes": sizes,
         "candidate_counts": {
             "accept": len(accept_ids),

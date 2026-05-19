@@ -42,7 +42,7 @@ model/qwen3-0.6b
 - `document`：待判断文档。
 - `groundtruth`：二分类标签，`1` 表示满足，`0` 表示不满足。
 
-推荐输出目录结构：
+运行中的输出目录结构：
 
 ```text
 experiments/runs/<task>/<run_name>/
@@ -58,6 +58,32 @@ experiments/runs/<task>/<run_name>/
     model/
     round_summary.json
 ```
+
+归档清理后，`experiments/runs/` 只长期保留结果表格 CSV、必要 Markdown
+摘要，以及 round0 基线/认证需要的少量 JSON。训练 checkpoint、LoRA adapter、
+中间预测 JSONL 和临时日志都是可再生中间产物，不作为长期结果保存。
+
+FEVER 的原始输入和 round0 缓存保存在 `experiments/inputs/fever/`：
+
+- `round_0/`：0.6B 基线 round0 预测、CRC 和选样缓存。
+- `qwen17b_alpha010_t1_seed1/round_0/`：1.7B、`T=1` round0 CRC 缓存。
+- `qwen17b_alpha010_t15_seed1/round_0/`：1.7B、`T=15` round0 预测和 CRC 缓存。
+- `data.jsonl`、`embeddings.npy`、`embeddings.ids.jsonl`、`embeddings.meta.json`：
+  FEVER 的源数据和 embedding，不随结果清理删除。
+
+## 代码入口
+
+保留的代码按职责收敛为四类：
+
+- `algorithms/cgsd.py`：CRC 校准、accept/defer 决策、neighbor support 和
+  k-Center Greedy 的核心算法。
+- `scripts/cgsd_*.py`：准备数据、构建 embedding、预测、校准、选样、训练和
+  finalize 的稳定命令行入口。
+- `scripts/run_cgsd.py`：串联 CGSD 流程的编排入口。
+- `src/`：二分类协议、数据加载、指标、模型封装和训练工具。
+
+`experiments/bin/` 只保留 shell wrapper；历史一次性 Python 脚本已经删除，避免
+和主入口产生交叉实现。
 
 ## 准备 split 和 embedding
 
@@ -313,3 +339,21 @@ python scripts/cgsd_finalize.py \
 - `missing 1/0 logprobs`：提高 `--top_logprobs`，确认 prompt 要求只输出 1/0。
 - k-Center 报 embedding 缺失：确认 embedding 文件覆盖所有 pool 样本 ID。
 - 最终认证不要复用中间 `round_summary.json` 的 `lambda_hat` 作为严格保证阈值。
+
+## 代码检查
+
+清理后用静态 AST 和内部导入图检查保留代码：
+
+```bash
+python scripts/check_ast_integrity.py
+```
+
+该检查不导入业务模块，不需要模型或 GPU。它会解析 `algorithms/`、`src/`、
+`scripts/` 和 `experiments/bin/` 下的 Python 文件，并报告语法错误、缺失的
+内部导入和循环引用。
+
+回归检查：
+
+```bash
+python -m unittest discover -s tests -v
+```

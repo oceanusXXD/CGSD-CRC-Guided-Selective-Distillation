@@ -1,80 +1,138 @@
 # FEVER 0.6B LoRA 平衡实验报告
-
 ## 页眉说明
-- `balanced_seed1`：第一个 balanced 测试集，只约束真实标签均衡，即 yes/no（label 1/0）各 5000；没有约束 base 预测分布。base 在该集合上 acc=0.5340、F1=0.2189、预测正类比例=0.0966。
-- `basef1_050`：第二个测试集，同样约束真实标签 yes/no 各 5000，同时构造成 base round0 在该集合上 F1=0.5000。base 在该集合上 acc=0.6000、预测正类比例=0.3000。
-- `basepred_label_quad_balanced_1000_seed1`：四格均衡训练集，按 `base_pred × label` 构造，`(base_pred=0,label=0)`、`(base_pred=0,label=1)`、`(base_pred=1,label=0)`、`(base_pred=1,label=1)` 各 250。
-- `basepred_label_quad_balanced_500_seed1`：从 full pool 构造的四格均衡 500 训练集，每格 125；半 epoch 版本实际训练 250 条，四格约为 62/62/62/64。
-- `accept15_defer85_basepred_label_quad_balanced_500_seed1`：accept15/defer85 来源的 500 训练集，不是严格四格均衡；四格为 38/213/212/37，accept/defer 为 75/425；半 epoch 版本训练 250 条。
-- 表格不是完整超参 sweep，只汇总当前已完成并用于对照的 base、500/1000 LoRA、四格数据实验，以及最新低学习率实验。
+- `balanced_seed1`：真实标签 yes/no 各 5000；base round0 在该集合上 acc=0.5340、F1=0.2189、pred_pos_rate=0.0966。
+- `basef1_050`：真实标签 yes/no 各 5000，并构造成 base round0 F1=0.5000；base acc=0.6000、pred_pos_rate=0.3000。
+- `basepred_label_quad_balanced_*`：四格均衡数据，按 `base_pred × label` 平衡构造。
+
+## 修正 Prompt 后的 vLLM 复测结果
+
+| test set | train size | train set | config | acc | F1 | pred_pos_rate | precision | recall |
+|---|---:|---|---|---:|---:|---:|---:|---:|
+| balanced_seed1 | 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 0.5007 | 0.0036 | 0.0011 | 0.8182 | 0.0018 |
+| balanced_seed1 | 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 0.5008 | 0.0048 | 0.0016 | 0.7500 | 0.0024 |
+| balanced_seed1 | 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.7340 | 0.7619 | 0.6172 | 0.6896 | 0.8512 |
+| balanced_seed1 | 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.7482 | 0.7843 | 0.6674 | 0.6859 | 0.9156 |
+| balanced_seed1 | 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.7480 | 0.7833 | 0.6630 | 0.6870 | 0.9110 |
+| balanced_seed1 | 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.7483 | 0.7831 | 0.6603 | 0.6880 | 0.9086 |
+| basef1_050 | 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 0.5001 | 0.0012 | 0.0005 | 0.6000 | 0.0006 |
+| basef1_050 | 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 0.5000 | 0.0012 | 0.0006 | 0.5000 | 0.0006 |
+| basef1_050 | 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.7025 | 0.7477 | 0.6793 | 0.6491 | 0.8818 |
+| basef1_050 | 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.7182 | 0.7713 | 0.7324 | 0.6490 | 0.9506 |
+| basef1_050 | 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.7065 | 0.7546 | 0.6961 | 0.6483 | 0.9026 |
+| basef1_050 | 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.7155 | 0.7663 | 0.7175 | 0.6502 | 0.9330 |
+| basef1_050 | 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e3_r1_a16_all | 0.7009 | 0.7457 | 0.6761 | 0.6486 | 0.8770 |
+| basef1_050 | 500 | full_random_balanced_500_seed1 | lr1e-5_e3_r1_a16_all | 0.6968 | 0.7390 | 0.6616 | 0.6487 | 0.8584 |
 
 ## 结果分析
-- 当前结论更新后仍然一致：LoRA 的 F1 高主要来自预测正类比例过高，而不是整体判别能力超过 base。大多数 LoRA 的预测正类比例在 0.95 到 0.99 附近，recall 很高，但 precision 基本只有 0.49 到 0.50。
-- 在 `balanced_seed1` 上，base acc=0.5340、F1=0.2189、预测正类比例=0.0966；多数 LoRA 的 F1 到约 0.65，但 acc 基本在 0.49 左右，说明模型接近“几乎全预测 1”。
-- 在 `basef1_050` 上，base acc=0.6000、F1=0.5000、预测正类比例=0.3000；已测 LoRA 的 acc 仍约 0.49 到 0.50，低于 base。
-- 四格均衡训练集是更合理的数据方向，但当前已测配置下仍未解决正类塌缩。`lr5e-6_e1_r1_a8_all` 在四格 1000 上的预测正类比例仍为 0.9511/0.9542；四格 500 半 epoch 也仍为 0.9690 左右。
-- 最新把学习率降到极低后，结论没有改善：`lr1e-8_e1_r1_a4` 在 `basef1_050` 上 acc=0.4976、F1=0.6625、预测正类比例=0.9886；`lr3e-7_e1_r1_a4_all` 在 `basef1_050` 上 acc=0.4976、F1=0.6625、预测正类比例=0.9888。这说明问题不只是学习率过大；更可能是训练目标/LoRA 更新方向把第一个输出 token 的分布整体推向 `1`。
-- 已有预测文件里的 `vllm_raw_text` 与 `logprob(1)-logprob(0)` 判定一致，说明不是后处理阈值把本来生成的 `0` 改成了 `1`；模型实际首 token 就大量生成 `1`。
-- 下一步定位应优先做三个对照：base 原始模型、未训练 LoRA adapter、训练后 LoRA，三者都用直接生成 1 token 的 `vllm_raw_text` 分布对比。如果未训练 LoRA 正常、训练后塌缩，则问题在训练更新；如果未训练 LoRA 就塌缩，则要查 adapter 包装/加载/推理路径。
+- 500 规模 `lr1e-5_e2_r1_a16_all` 在两个测试集上都明显欠预测正类：`pred_pos_rate` 约 0.0005-0.0016，F1 接近 0。这说明修正 prompt 后，旧的“几乎全预测 1”结论被推翻，但 500 规模 e2 配置本身也不够好。
+- 1000 规模 `lr1e-5_e2_r1_a16_all` 表现稳定提升：在 `balanced_seed1` 上 acc=0.7340/0.7482；在 `basef1_050` 上 acc=0.7065/0.7155，F1=0.7546/0.7663。
+- 1000 规模 `lr1e-5_e2_r2_a16_all` 也有效：在 `balanced_seed1` 上 acc=0.7480/0.7483；在 `basef1_050` 上 acc=0.7025/0.7182。相比 r1，r2 的 full_random 在两个测试集上都不差，但 accept/defer 在 basef1_050 上略低于 r1。
+- `lr1e-5_e3_r1_a16_all` 的两个 500 模型在 `basef1_050` 上也不错，acc 约 0.697-0.701，F1 约 0.739-0.746，说明 epoch=3 可以让 500 规模从欠预测正类中恢复，但还需要在 `balanced_seed1` 上补同配置验证。
 
-## 数据检查
-- 1000 四格训练集：rows=1000，四格分布为 {'pred0_label0': 250, 'pred0_label1': 250, 'pred1_label0': 250, 'pred1_label1': 250}。
-- 500 full-pool 四格训练集：rows=500，四格分布为 {'pred0_label0': 125, 'pred0_label1': 125, 'pred1_label0': 125, 'pred1_label1': 125}；halfepoch rows=250，四格为 {'pred0_label0': 62, 'pred0_label1': 62, 'pred1_label0': 62, 'pred1_label1': 64}。
-- 500 accept15/defer85 训练集：rows=500，四格为 {'pred0_label0': 38, 'pred0_label1': 213, 'pred1_label0': 212, 'pred1_label1': 37}，accept/defer={'accept': 75, 'defer': 425}；halfepoch rows=250，四格为 {'pred0_label0': 19, 'pred0_label1': 107, 'pred1_label0': 106, 'pred1_label1': 18}，accept/defer={'accept': 37, 'defer': 213}。
-- Base-F1 测试集 `balanced_test_10000_basef1_050_seed1`：acc=0.6000，F1=0.5000，label 0/1=5000/5000。
+## 1000 规模 epoch 扫描：basef1_050
 
-## 结果：balanced_seed1
-| 规模 | 训练集 | 配置 | loss | acc | F1 | 预测正类比例 | precision | recall |
-|---:|---|---|---:|---:|---:|---:|---:|---:|
-| 0 | base | base qwen3-0.6b |  | 0.5340 | 0.2189 | 0.0966 | 0.6760 | 0.1306 |
-| 500 | accept15_defer85_basepred_label_quad_balanced_500_seed1 | lr5e-6_halfepoch_r1_a8_all_quad500 | 21.1443 | 0.4954 | 0.6597 | 0.9826 | 0.4977 | 0.9780 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 2.1847 | 0.4879 | 0.6524 | 0.9731 | 0.4938 | 0.9610 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_last1 | 20.4288 | 0.4957 | 0.6584 | 0.9761 | 0.4978 | 0.9718 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a8_all | 11.0497 | 0.4913 | 0.6552 | 0.9753 | 0.4955 | 0.9666 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e3_r1_a16_all | 0.3283 | 0.4812 | 0.6414 | 0.9466 | 0.4901 | 0.9278 |
-| 500 | basepred_label_quad_balanced_500_seed1 | lr5e-6_halfepoch_r1_a8_all_quad500 | 20.9705 | 0.4942 | 0.6557 | 0.9690 | 0.4970 | 0.9632 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 2.1345 | 0.4882 | 0.6524 | 0.9724 | 0.4939 | 0.9606 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_last1 | 20.4144 | 0.4962 | 0.6603 | 0.9832 | 0.4981 | 0.9794 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a8_all | 10.9509 | 0.4899 | 0.6528 | 0.9691 | 0.4948 | 0.9590 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e3_r1_a16_all | 0.2880 | 0.4856 | 0.6483 | 0.9626 | 0.4925 | 0.9482 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.3079 | 0.4926 | 0.6573 | 0.9808 | 0.4962 | 0.9734 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r1_a8_all | 0.5730 | 0.4858 | 0.6485 | 0.9630 | 0.4926 | 0.9488 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.3048 | 0.4905 | 0.6554 | 0.9787 | 0.4951 | 0.9692 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r2_a8_all | 0.9566 | 0.4867 | 0.6501 | 0.9669 | 0.4931 | 0.9536 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr5e-6_e1_r1_a8_all | 18.8541 | 0.4923 | 0.6536 | 0.9655 | 0.4960 | 0.9578 |
-| 1000 | basepred_label_quad_balanced_1000_seed1 | lr5e-6_e1_r1_a8_all | 18.9941 | 0.4869 | 0.6464 | 0.9511 | 0.4931 | 0.9380 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.2522 | 0.4908 | 0.6553 | 0.9772 | 0.4953 | 0.9680 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r1_a8_all | 0.5237 | 0.4896 | 0.6538 | 0.9742 | 0.4947 | 0.9638 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.2605 | 0.4919 | 0.6567 | 0.9799 | 0.4959 | 0.9718 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r2_a8_all | 0.9319 | 0.4889 | 0.6521 | 0.9693 | 0.4943 | 0.9582 |
+### 固定参数
 
-## 结果：basef1_050
-| 规模 | 训练集 | 配置 | loss | acc | F1 | 预测正类比例 | precision | recall |
-|---:|---|---|---:|---:|---:|---:|---:|---:|
-| 0 | base | base qwen3-0.6b |  | 0.6000 | 0.5000 | 0.3000 | 0.6667 | 0.4000 |
-| 500 | accept15_defer85_basepred_label_quad_balanced_500_seed1 | lr5e-6_halfepoch_r1_a8_all_quad500 | 21.1443 | 0.4971 | 0.6603 | 0.9805 | 0.4985 | 0.9776 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 2.1847 | 0.4927 | 0.6557 | 0.9733 | 0.4962 | 0.9660 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_last1 | 20.4288 | 0.4971 | 0.6619 | 0.9873 | 0.4985 | 0.9844 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e2_r1_a8_all | 11.0497 | 0.4913 | 0.6514 | 0.9593 | 0.4955 | 0.9506 |
-| 500 | accept15_defer85_random_balanced_500_seed1 | lr1e-5_e3_r1_a16_all | 0.3283 | 0.4865 | 0.6465 | 0.9527 | 0.4929 | 0.9392 |
-| 500 | basepred_label_quad_balanced_500_seed1 | lr5e-6_halfepoch_r1_a8_all_quad500 | 20.9705 | 0.4982 | 0.6584 | 0.9690 | 0.4991 | 0.9672 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_all | 2.1345 | 0.4934 | 0.6571 | 0.9774 | 0.4966 | 0.9708 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a16_last1 | 20.4144 | 0.4972 | 0.6606 | 0.9814 | 0.4986 | 0.9786 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e2_r1_a8_all | 10.9509 | 0.4942 | 0.6578 | 0.9780 | 0.4970 | 0.9722 |
-| 500 | full_random_balanced_500_seed1 | lr1e-5_e3_r1_a16_all | 0.2880 | 0.4909 | 0.6525 | 0.9649 | 0.4953 | 0.9558 |
-| 500 | full_random_balanced_500_seed1 | lr1e-8_e1_r1_a4_all | 20.9700 | 0.4976 | 0.6625 | 0.9886 | 0.4988 | 0.9862 |
-| 500 | full_random_balanced_500_seed1 | lr3e-7_e1_r1_a4_all | 20.9575 | 0.4976 | 0.6625 | 0.9888 | 0.4988 | 0.9864 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.3079 | 0.4949 | 0.6584 | 0.9785 | 0.4974 | 0.9734 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r1_a8_all | 0.5730 | 0.4914 | 0.6525 | 0.9634 | 0.4955 | 0.9548 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.3048 | 0.4964 | 0.6609 | 0.9852 | 0.4982 | 0.9816 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr1e-5_e2_r2_a8_all | 0.9566 | 0.4870 | 0.6465 | 0.9512 | 0.4932 | 0.9382 |
-| 1000 | accept15_defer85_random_balanced_1000_seed1 | lr5e-6_e1_r1_a8_all | 18.8541 | 0.4938 | 0.6510 | 0.9506 | 0.4967 | 0.9444 |
-| 1000 | basepred_label_quad_balanced_1000_seed1 | lr5e-6_e1_r1_a8_all | 18.9941 | 0.4910 | 0.6500 | 0.9542 | 0.4953 | 0.9452 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r1_a16_all | 0.2522 | 0.4948 | 0.6577 | 0.9758 | 0.4973 | 0.9706 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r1_a8_all | 0.5237 | 0.4944 | 0.6575 | 0.9760 | 0.4971 | 0.9704 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r2_a16_all | 0.2605 | 0.4952 | 0.6588 | 0.9796 | 0.4976 | 0.9748 |
-| 1000 | full_random_balanced_1000_seed1 | lr1e-5_e2_r2_a8_all | 0.9319 | 0.4928 | 0.6549 | 0.9696 | 0.4963 | 0.9624 |
+这一组只改变 `epoch` 和训练子集；其他训练/推理参数固定如下。
 
-## 结果文件
-- CSV: `experiments/runs/fever_balanced_lora_06b_final_table.csv`
-- JSON: `experiments/runs/fever_balanced_lora_06b_final_table.json`
+| 参数 | 值 |
+|---|---|
+| base model | `qwen3-0.6b` |
+| test set | `balanced_test_10000_basef1_050_seed1` |
+| train size | 1000 |
+| lr | `1e-5` |
+| LoRA | `r=1, alpha=16, target=attention_mlp, layer_scope=all` |
+| max_length | 4096 |
+| vLLM parallel_requests | 2000 |
+| checkpoint policy | 训练到 e4，同时保存 `epoch_3` / `epoch_4` checkpoint |
+
+### 变化参数：epoch = 3 vs 4
+
+| train set | epoch | rows | complete | acc | F1 | TP | TN | FP | FN |
+|---|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `full_random_balanced_1000_seed1` | 3 | 10000 | yes | 0.7175 | 0.7705 | 4741 | 2434 | 2566 | 259 |
+| `full_random_balanced_1000_seed1` | 4 | 10000 | yes | 0.7237 | 0.7781 | 4845 | 2392 | 2608 | 155 |
+| `accept15_defer85_random_balanced_1000_seed1` | 3 | 10000 | yes | 0.7188 | 0.7710 | 4734 | 2454 | 2546 | 266 |
+| `accept15_defer85_random_balanced_1000_seed1` | 4 | 10000 | yes | 0.7141 | 0.7654 | 4665 | 2476 | 2524 | 335 |
+
+
+### 小结：epoch 选择
+
+| 对比项 | e3 | e4 | 当前判断 |
+|---|---:|---:|---|
+| `full_random_1000` F1 | 0.7705 | 0.7781 | e4 更好 |
+| `accept15_defer85_random_1000` F1 | 0.7710 | 0.7654 | e3 更高 |
+| 两个训练集平均 F1 | 0.7707 | 0.7718 | e4 略高 |
+
+最终沿用 `epoch=4` 跑后续数据集。虽然 `accept15_defer85_random_1000` 单项 e3 更高，但两组平均 F1 上 e4 略高，且 `full_random_1000` 的 e4 提升更明显。
+
+## 1000 规模 accept/defer vs full_random：e4 对比
+
+### 固定参数
+
+这一组固定训练和测试配置，只改变训练数据来源。对照基线是同规模的 `full_random_balanced_1000_seed1`。
+
+| 参数 | 值 |
+|---|---|
+| test set | `balanced_test_10000_basef1_050_seed1` |
+| train size | 1000 |
+| epoch | 4 |
+| lr | `1e-5` |
+| LoRA | `r=1, alpha=16, target=attention_mlp, layer_scope=all` |
+| vLLM parallel_requests | 2000 |
+| full_random run root | `fever_balanced_lora_06b_lr1e5_e4_all_sweep1000_r1_alpha16` |
+| accept/defer run root | `fever_balanced_lora_06b_lr1e5_e4_selected_sweep1000_r1_alpha16` |
+
+### 对照基线：full_random_1000
+
+| train set | sampling | accept/defer split | acc | F1 | pred_pos_rate | precision | recall |
+|---|---|---|---:|---:|---:|---:|---:|
+| `full_random_balanced_1000_seed1` | random from full pool | n/a | 0.7237 | 0.7781 | 0.7453 | 0.6501 | 0.9690 |
+
+### 总览：accept/defer 相对 full_random 的变化
+
+`Δ` 列均为相对 `full_random_balanced_1000_seed1` e4 的差值。
+
+| train set | sampling | accept/defer split | acc | Δacc | F1 | ΔF1 | recall | Δrecall |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| `accept15_defer85_random_balanced_1000_seed1` | random | 15/85 | 0.7141 | -0.0096 | 0.7654 | -0.0127 | 0.9330 | -0.0360 |
+| `accept30_defer70_random_balanced_1000_seed1` | random | 30/70 | 0.7026 | -0.0211 | 0.7413 | -0.0368 | 0.8524 | -0.1166 |
+| `accept20_defer80_random_balanced_1000_seed1` | random | 20/80 | 0.6769 | -0.0468 | 0.6992 | -0.0789 | 0.7510 | -0.2180 |
+| `accept15_defer85_kcenter_balanced_1000_seed1` | kcenter | 15/85 | 0.6846 | -0.0391 | 0.7076 | -0.0705 | 0.7632 | -0.2058 |
+| `accept30_defer70_kcenter_balanced_1000_seed1` | kcenter | 30/70 | 0.6546 | -0.0691 | 0.6580 | -0.1201 | 0.6644 | -0.3046 |
+
+### 只看 random 采样：accept/defer 比例变化
+
+| train set | accept/defer split | acc | F1 | pred_pos_rate | precision | recall | 相对 full_random |
+|---|---|---:|---:|---:|---:|---:|---|
+| `full_random_balanced_1000_seed1` | n/a | 0.7237 | 0.7781 | 0.7453 | 0.6501 | 0.9690 | baseline |
+| `accept15_defer85_random_balanced_1000_seed1` | 15/85 | 0.7141 | 0.7654 | 0.7189 | 0.6489 | 0.9330 | 最接近 full_random，F1 -0.0127 |
+| `accept30_defer70_random_balanced_1000_seed1` | 30/70 | 0.7026 | 0.7413 | 0.6498 | 0.6559 | 0.8524 | precision 略高，但 recall 明显低 |
+| `accept20_defer80_random_balanced_1000_seed1` | 20/80 | 0.6769 | 0.6992 | 0.5741 | 0.6541 | 0.7510 | 正类预测不足，F1 -0.0789 |
+
+### 只看 kcenter 采样：accept/defer 比例变化
+
+| train set | accept/defer split | acc | F1 | pred_pos_rate | precision | recall | 相对 full_random |
+|---|---|---:|---:|---:|---:|---:|---|
+| `full_random_balanced_1000_seed1` | n/a | 0.7237 | 0.7781 | 0.7453 | 0.6501 | 0.9690 | baseline |
+| `accept15_defer85_kcenter_balanced_1000_seed1` | 15/85 | 0.6846 | 0.7076 | 0.5786 | 0.6595 | 0.7632 | kcenter 中较好，但 F1 -0.0705 |
+| `accept30_defer70_kcenter_balanced_1000_seed1` | 30/70 | 0.6546 | 0.6580 | 0.5098 | 0.6516 | 0.6644 | 最弱，recall 掉得最多 |
+
+### 混合构造：global random 100 + accept random 150 + defer kcenter 750
+
+这组固定 `epoch=4`、`lr=1e-5`、1000 条训练数据，只改变训练集构成。混合集命名为 `global_random100_accept_random150_defer_kcenter750_balanced_1000_seed1`，标签仍保持 500/500。
+
+| train set | 训练构成 | acc | Δacc | F1 | ΔF1 | pred_pos_rate | precision | recall | Δrecall |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `full_random_balanced_1000_seed1` | full random 1000 | 0.7237 | baseline | 0.7781 | baseline | 0.7453 | 0.6501 | 0.9690 | baseline |
+| `global_random100_accept_random150_defer_kcenter750_balanced_1000_seed1` | full random 100 + accept random 150 + defer kcenter 750 | 0.6576 | -0.0661 | 0.6553 | -0.1228 | 0.4934 | 0.6597 | 0.6510 | -0.3180 |
+
+这个混合构造比 full_random 更保守：precision 略高，但 `pred_pos_rate` 从 0.7453 降到 0.4934，recall 大幅下降，导致 F1 明显低于 full_random。
+
+### 小结：accept/defer 与 full_random 的差异
+
+- `full_random_balanced_1000_seed1` e4 仍是这批里最强：F1=0.7781、acc=0.7237。
+- accept/defer 构造普遍降低 recall；precision 基本持平或略高，但不足以抵消 recall 下降。
+- random accept/defer 明显强于 kcenter accept/defer。最佳 accept/defer 是 `accept15_defer85_random_balanced_1000_seed1`，与 full_random 最接近，F1 低 0.0127。
+- 四个新增完整跑完的数据集中，最佳是 `accept30_defer70_random_balanced_1000_seed1`，F1=0.7413，比 full_random 低 0.0368。
+- 新测的 `global_random100_accept_random150_defer_kcenter750_balanced_1000_seed1` 不建议作为后续默认方案：F1=0.6553，比 full_random 低 0.1228，主要问题是 recall 过低。

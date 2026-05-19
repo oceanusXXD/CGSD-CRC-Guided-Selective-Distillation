@@ -47,9 +47,10 @@ from scripts.cgsd_cli_common import (
     summarize_teacher_label_usage,
     train_label_snapshot,
     write_stage_usage,
+    StageCacheDecision,
 )
 from src.binary_protocol import BINARY_SCORE_SOURCE, BINARY_SYSTEM_PROMPT, binary_user_prompt, normalize_binary_token
-from src.data import PairExample
+from src.data import PairExample, format_cgsd_chat_prompt
 from src.utils import read_json, write_json, write_jsonl
 
 
@@ -213,7 +214,7 @@ def _wait_for_model(client: Any, *, model_name: str, timeout: int, proc: subproc
 
 
 def _messages(example: PairExample) -> list[dict[str, str]]:
-    """构造 Qwen chat prompt。"""
+    """保留给旧调用点的兼容接口。"""
     return [
         {
             "role": "system",
@@ -226,12 +227,43 @@ def _messages(example: PairExample) -> list[dict[str, str]]:
     ]
 
 
+def _completion_prompt(example: PairExample) -> str:
+    """构造与训练阶段一致的手写 Qwen non-thinking prompt。"""
+    return format_cgsd_chat_prompt(example.query, example.document)
+
+
 def _normalize_token(token: Any) -> str:
     return normalize_binary_token(token)
 
 
 def _collect_binary_logprobs(choice: Any) -> tuple[float | None, float | None]:
     """从首个生成 token 的 top_logprobs 中提取 1/0 logprob。"""
+    completion_logprobs = getattr(choice, "logprobs", None)
+    completion_top_logprobs = list(getattr(completion_logprobs, "top_logprobs", []) or [])
+    if completion_top_logprobs and isinstance(completion_top_logprobs[0], dict):
+        one_lp: float | None = None
+        zero_lp: float | None = None
+        for raw_token, raw_value in completion_top_logprobs[0].items():
+            token_norm = _normalize_token(raw_token)
+            if raw_value is None:
+                continue
+            if token_norm == "one":
+                one_lp = float(raw_value) if one_lp is None else max(one_lp, float(raw_value))
+            elif token_norm == "zero":
+                zero_lp = float(raw_value) if zero_lp is None else max(zero_lp, float(raw_value))
+
+        generated_tokens = list(getattr(completion_logprobs, "tokens", []) or [])
+        generated_lps = list(getattr(completion_logprobs, "token_logprobs", []) or [])
+        if generated_tokens and generated_lps:
+            generated_norm = _normalize_token(generated_tokens[0])
+            generated_lp = generated_lps[0]
+            if generated_lp is not None:
+                if generated_norm == "one" and one_lp is None:
+                    one_lp = float(generated_lp)
+                if generated_norm == "zero" and zero_lp is None:
+                    zero_lp = float(generated_lp)
+        return one_lp, zero_lp
+
     content_items = list(getattr(getattr(choice, "logprobs", None), "content", []) or [])
     if not content_items:
         return None, None
@@ -257,6 +289,24 @@ def _collect_binary_logprobs(choice: Any) -> tuple[float | None, float | None]:
     return one_lp, zero_lp
 
 
+def _last_prompt_token_logprob(choice: Any, *, expected_token: str) -> float:
+    logprobs = getattr(choice, "logprobs", None)
+    tokens = list(getattr(logprobs, "tokens", []) or [])
+    token_logprobs = list(getattr(logprobs, "token_logprobs", []) or [])
+    if not token_logprobs:
+        raise RuntimeError(f"missing prompt logprobs for candidate {expected_token!r}")
+    if tokens:
+        token_norm = _normalize_token(tokens[-1])
+        if token_norm and token_norm != expected_token:
+            raise RuntimeError(
+                f"candidate token mismatch: expected {expected_token!r}, got {tokens[-1]!r}"
+            )
+    value = token_logprobs[-1]
+    if value is None:
+        raise RuntimeError(f"missing final prompt token logprob for candidate {expected_token!r}")
+    return float(value)
+
+
 def _predict_one(
     *,
     client: Any,
@@ -267,32 +317,28 @@ def _predict_one(
     last_exc: Exception | None = None
     for attempt in range(max(1, int(args.request_retries))):
         try:
-            response = client.chat.completions.create(
+            prompt = _completion_prompt(example)
+            response = client.completions.create(
                 model=model_name,
-                messages=_messages(example),
+                prompt=[f"{prompt}1", f"{prompt}0"],
                 temperature=float(args.temperature),
-                max_tokens=int(args.max_tokens),
-                logprobs=True,
-                top_logprobs=int(args.top_logprobs),
-                extra_body={
-                    "enable_thinking": False,
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
+                max_tokens=0,
+                logprobs=0,
+                echo=True,
             )
-            choice = response.choices[0]
-            content = str(choice.message.content or "")
-            one_lp, zero_lp = _collect_binary_logprobs(choice)
-            if one_lp is None and zero_lp is None:
-                raise RuntimeError(f"missing 1/0 logprobs for output={content!r}")
-            if one_lp is None:
-                one_lp = -100.0
-            if zero_lp is None:
-                zero_lp = -100.0
+            choices = list(response.choices)
+            choices_by_index = {
+                int(getattr(choice, "index", index)): choice
+                for index, choice in enumerate(choices)
+            }
+            one_lp = _last_prompt_token_logprob(choices_by_index[0], expected_token="one")
+            zero_lp = _last_prompt_token_logprob(choices_by_index[1], expected_token="zero")
             # score 是有方向的 1-vs-0 margin；CRC 的无方向确信度
             # 在 calibrate 阶段再统一转成 sigmoid(abs(score)/T)。
             score = float(one_lp) - float(zero_lp)
             probability = float(1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, score)))))
             prediction = 1 if score > 0.0 else 0
+            content = str(int(prediction))
             row = dict(example.metadata)
             row.update(
                 {
@@ -424,18 +470,48 @@ def main() -> None:
     if args.show_result:
         print_existing_stage_result(stage_name="cgsd_predict_vllm_openai", summary_path=usage_path)
         return
-    cache_decision = stage_cache_decision(
-        stage_name="cgsd_predict_vllm_openai",
-        required_outputs=[
-            all_predictions_path,
-            calibration_predictions_path,
-            final_calibration_predictions_path,
-            pool_predictions_path,
-            train_label_snapshot_path,
-            usage_path,
-        ],
-        cache_policy=args.cache_policy,
-    )
+    required_outputs = [
+        all_predictions_path,
+        calibration_predictions_path,
+        final_calibration_predictions_path,
+        pool_predictions_path,
+        train_label_snapshot_path,
+        usage_path,
+    ]
+    try:
+        cache_decision = stage_cache_decision(
+            stage_name="cgsd_predict_vllm_openai",
+            required_outputs=required_outputs,
+            cache_policy=args.cache_policy,
+        )
+    except RuntimeError as exc:
+        if args.cache_policy == "reuse" and partial_predictions_path.exists():
+            existing = [str(path) for path in required_outputs if path.exists()]
+            missing = [str(path) for path in required_outputs if not path.exists()]
+            cache_decision = StageCacheDecision(
+                stage_name="cgsd_predict_vllm_openai",
+                cache_policy="reuse",
+                cache_hit=False,
+                action="run",
+                existing_outputs=existing,
+                missing_outputs=missing,
+            )
+            print(
+                json.dumps(
+                    {
+                        "stage_name": "cgsd_predict_vllm_openai",
+                        "cache_policy": "reuse",
+                        "partial_cache_resume": True,
+                        "existing_outputs": existing,
+                        "missing_outputs": missing,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        else:
+            raise
     if cache_decision.cache_hit:
         print_existing_stage_result(stage_name="cgsd_predict_vllm_openai", summary_path=usage_path)
         return

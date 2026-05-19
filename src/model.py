@@ -22,6 +22,7 @@ LORA_LAYER_SCOPES = {"last1", "last4", "all"}
 # 训练和评估共用同一份 mode 映射，避免不同入口加载到不同 LoRA 结构。
 LORA_TARGET_GROUPS: dict[str, list[str]] = {
     "qv": ["q_proj", "v_proj"],
+    "qkvo": ["q_proj", "k_proj", "v_proj", "o_proj"],
     "attention": ["q_proj", "k_proj", "v_proj", "o_proj"],
     "mlp": ["gate_proj", "up_proj", "down_proj"],
     "attention_mlp": [

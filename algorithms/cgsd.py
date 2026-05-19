@@ -257,7 +257,12 @@ def _attach_neighbor_support_scores(
     support_rows: Sequence[Mapping[str, Any]],
     exclude_self: bool,
 ) -> list[dict[str, Any]]:
-    """Attach Step2-style local empirical reliability N_i to row dictionaries."""
+    """给样本补充局部邻域可靠度 N_i。
+
+    N_i 的含义是：在 embedding 空间里，和当前样本预测方向相同的邻居中，
+    有多少相似度权重来自“预测也确实正确”的样本。它只作为阈值自适应的
+    局部证据，不改变原始 student score。
+    """
     output = [dict(row) for row in target_rows]
     bank_rows = _support_bank_rows(support_rows)
     if not output or not bank_rows:
@@ -415,11 +420,9 @@ def calibrate_crc(
         raise ValueError("alpha must be within [0, 1]")
 
     if embeddings_by_id is not None:
-        # In the round pipeline, calibration_rows is D_guide. This branch
-        # builds the intermediate adaptive CRC from D_guide and estimates
-        # neighbor support within D_guide itself, excluding each row's own
-        # embedding. D_cert must stay out of this path; use it only for the
-        # final-result CRC/evaluation layer.
+        # 中间轮里 calibration_rows 就是 D_guide。这里只用 D_guide 估计
+        # 自适应 CRC 的 neighbor support，并排除样本自身 embedding。
+        # D_cert 不能进入此路径；它只能用于最终 CRC/评估层。
         rows = _attach_neighbor_support_scores(
             rows,
             embeddings_by_id=embeddings_by_id,
@@ -530,6 +533,7 @@ def apply_crc_decisions(
     """
     routed = attach_routing_scores(prediction_rows, temperature=temperature)
     threshold = float(lambda_hat)
+    force_all_defer = threshold > 1.0
     neighbor_enabled = bool(
         embeddings_by_id is not None
         and support_rows is not None
@@ -542,9 +546,8 @@ def apply_crc_decisions(
     )
     if neighbor_enabled:
         support_routed = attach_routing_scores(support_rows or [], temperature=temperature)
-        # For intermediate round decisions, callers pass D_guide as
-        # support_rows. D_cert remains isolated for the final CRC/evaluation
-        # path and should not be used as the neighbor-support bank here.
+        # 中间轮决策时，调用方传入的 support_rows 是 D_guide。
+        # D_cert 仍然隔离给最终 CRC/评估使用，不能作为这里的邻居库。
         routed = _attach_neighbor_support_scores(
             routed,
             embeddings_by_id=embeddings_by_id or {},
@@ -560,7 +563,10 @@ def apply_crc_decisions(
     decided: list[dict[str, Any]] = []
     for row in routed:
         item = dict(row)
-        if neighbor_enabled:
+        if force_all_defer:
+            decision_threshold = threshold
+            decision = "defer"
+        elif neighbor_enabled:
             reference = _row_reference_support(
                 item,
                 global_reference_support=reference_support,
@@ -571,9 +577,10 @@ def apply_crc_decisions(
                 float(item.get("neighbor_support", 0.0) or 0.0),
                 reference,
             )
+            decision = "accept" if float(item["routing_score"]) >= float(decision_threshold) - 1e-12 else "defer"
         else:
             decision_threshold = threshold
-        decision = "accept" if float(item["routing_score"]) >= float(decision_threshold) - 1e-12 else "defer"
+            decision = "accept" if float(item["routing_score"]) >= float(decision_threshold) - 1e-12 else "defer"
         item["crc_decision"] = decision
         item["defer"] = decision == "defer"
         item["crc_lambda"] = threshold
@@ -779,6 +786,7 @@ def k_center_greedy(
         return ids_with_embeddings[:requested]
 
     rng = random.Random(seed)
+    # 第一个中心选“离候选整体质心最远”的点，避免随机起点锁在局部密集区。
     center = np.mean(matrix, axis=0, keepdims=True)
     first_distances = np.sum((matrix - center) ** 2, axis=1)
     max_distance = float(np.max(first_distances))
@@ -790,6 +798,8 @@ def k_center_greedy(
     min_distances[first_index] = -1.0
 
     while len(selected_indices) < requested and len(selected_indices) < len(ids_with_embeddings):
+        # 维护每个候选点到已选集合的最近距离；每次选最近距离最大的点，
+        # 等价于贪心缩小当前最坏覆盖半径。
         next_index = int(np.argmax(min_distances))
         selected_indices.append(next_index)
         candidate_distances = np.sum((matrix - matrix[next_index]) ** 2, axis=1)
@@ -916,6 +926,9 @@ def build_deployment_rows(
     train_label_by_id: Mapping[str, int],
     lambda_hat: float,
     temperature: float,
+    embeddings_by_id: Mapping[str, np.ndarray] | None = None,
+    support_rows: Sequence[Mapping[str, Any]] | None = None,
+    crc_result: CRCResult | Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """构造最终部署决策表。
 
@@ -927,6 +940,9 @@ def build_deployment_rows(
         prediction_rows,
         lambda_hat=lambda_hat,
         temperature=temperature,
+        embeddings_by_id=embeddings_by_id,
+        support_rows=support_rows,
+        crc_result=crc_result,
     )
     output: list[dict[str, Any]] = []
     for row in decided:

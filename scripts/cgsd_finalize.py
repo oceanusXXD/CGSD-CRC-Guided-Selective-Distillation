@@ -32,6 +32,7 @@ from scripts.cgsd_cli_common import (
     write_stage_usage,
 )
 from algorithms.cgsd import build_deployment_rows
+from scripts.run_cgsd import load_embeddings
 from src.utils import read_json, write_json, write_jsonl
 
 
@@ -41,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--round_index", type=int, default=None)
     parser.add_argument("--round_summary_path", default=None)
     parser.add_argument("--pool_crc_predictions_path", default=None)
+    parser.add_argument("--final_calibration_predictions_path", default=None)
+    parser.add_argument("--embeddings_path", default=None)
     parser.add_argument("--train_label_snapshot_path", default=None)
     parser.add_argument("--train_rows_path", default=None)
     parser.add_argument("--deployment_decisions_path", default=None)
@@ -92,9 +95,33 @@ def main() -> None:
     round_dir = output_dir / f"round_{round_index}"
     round_summary_path = input_artifact_path(args.round_summary_path, round_dir / "round_summary.json")
     pool_crc_predictions_path = input_artifact_path(args.pool_crc_predictions_path, round_dir / "pool_crc_predictions.jsonl")
+    final_calibration_predictions_path = input_artifact_path(
+        args.final_calibration_predictions_path,
+        round_dir / "final_calibration_student_predictions.jsonl",
+    )
     train_snapshot_path = input_artifact_path(args.train_label_snapshot_path, round_dir / "train_label_snapshot.json")
     round_summary = read_json(round_summary_path)
     final_pool_rows = read_jsonl(pool_crc_predictions_path)
+    final_calibration_rows = (
+        read_jsonl(final_calibration_predictions_path)
+        if final_calibration_predictions_path.exists()
+        else []
+    )
+    crc_payload = round_summary.get("crc", {})
+    embeddings_by_id = None
+    support_rows = None
+    crc_result = None
+    if bool(isinstance(crc_payload, dict) and crc_payload.get("neighbor_support_enabled", False)):
+        if not args.embeddings_path:
+            raise ValueError("--embeddings_path is required to finalize neighbor-support CRC decisions")
+        if not final_calibration_rows:
+            raise ValueError(
+                "neighbor-support finalize requires non-empty final calibration predictions "
+                "as the D_cert support bank"
+            )
+        embeddings_by_id = load_embeddings(input_artifact_path(args.embeddings_path, PROJECT_ROOT / str(args.embeddings_path)))
+        support_rows = final_calibration_rows
+        crc_result = crc_payload
     train_rows_for_summary = (
         read_jsonl(input_artifact_path(args.train_rows_path, output_dir / "cgsd_train_rows.jsonl"))
         if args.train_rows_path
@@ -109,8 +136,18 @@ def main() -> None:
         train_label_by_id=train_label_by_id,
         lambda_hat=float(round_summary["lambda_hat"]),
         temperature=float(round_summary["temperature"]),
+        embeddings_by_id=embeddings_by_id,
+        support_rows=support_rows,
+        crc_result=crc_result,
     )
     final_checkpoint_dir = None if round_index == 0 else str(round_dir / "model")
+    deployment_teacher_defer_count = sum(1 for row in deployment_rows if bool(row.get("teacher_required", False)))
+    deployment_teacher_train_reuse_count = sum(
+        1 for row in deployment_rows if row.get("deployment_source") == "teacher_train_label"
+    )
+    deployment_student_accept_count = sum(
+        1 for row in deployment_rows if row.get("deployment_source") == "student_accept"
+    )
     summary = {
         "best_round_index": round_index,
         "best_lambda_hat": float(round_summary["lambda_hat"]),
@@ -118,9 +155,21 @@ def main() -> None:
         "best_pool_summary": round_summary["pool_summary"],
         "teacher_train_calls": len(train_label_by_id),
         "teacher_train_calls_total_spent": len(train_rows_for_summary) if train_rows_for_summary else len(train_label_by_id),
-        "teacher_defer_calls": sum(1 for row in deployment_rows if bool(row.get("teacher_required", False))),
+        "teacher_defer_calls": deployment_teacher_defer_count,
         "final_model_source": "zero_shot_base" if round_index == 0 else "lora_adapter",
         "final_checkpoint_dir": final_checkpoint_dir,
+        "final_deployment_summary": {
+            "total": len(deployment_rows),
+            "student_accept_count": deployment_student_accept_count,
+            "teacher_train_label_reuse_count": deployment_teacher_train_reuse_count,
+            "teacher_defer_count": deployment_teacher_defer_count,
+            "teacher_defer_rate": float(deployment_teacher_defer_count / len(deployment_rows)) if deployment_rows else 0.0,
+        },
+        "final_neighbor_support_source": (
+            str(final_calibration_predictions_path)
+            if support_rows is not None
+            else None
+        ),
     }
     write_jsonl(deployment_rows, deployment_decisions_path)
     write_json(summary, summary_path)

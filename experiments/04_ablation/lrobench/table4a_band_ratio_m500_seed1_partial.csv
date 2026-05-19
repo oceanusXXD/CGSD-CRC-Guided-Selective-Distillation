@@ -1,6 +1,0 @@
-name,run,status,lambda,selected,anchors,train_rows,band_counts,defer,total,defer_rate,accept,raw_acc,raw_f1,accept_f1,cascade_f1,wrong_accept_risk,accept_error_rate,teacher_train,teacher_defer
-A1 boundary 1/0/0,exp4_band_A1_boundary_m500_seed1,completed,0.54,497,50,547,"{""B"": 497, ""F"": 0, ""M"": 0}",597,762,0.7834645669291339,165,0.8228346456692913,0.5995453182966565,0.546031746031746,0.9738657619320235,0.01706036745406824,0.07878787878787878,547,153
-A2 default 0.6/0.3/0.1,exp4_band_A2_default_m500_seed1,completed,0.53,497,50,547,"{""B"": 497, ""F"": 0, ""M"": 0}",357,762,0.468503937007874,405,0.7874015748031497,0.446538737446198,0.474025974025974,0.9139148412169413,0.05249343832020997,0.09876543209876543,547,53
-A3 uniform 0.33/0.34/0.33,exp4_band_A3_uniform_m500_seed1,running,,497,50,547,"{""B"": 497, ""F"": 0, ""M"": 0}",,,,,,,,,,,,
-A4 deep 0/0/1,exp4_band_A4_deep_m500_seed1,pending,,,0,0,,,,,,,,,,,,,
-A5 middle 0/1/0,exp4_band_A5_middle_m500_seed1,pending,,,0,0,,,,,,,,,,,,,

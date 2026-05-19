@@ -341,6 +341,18 @@ def fit(
             },
             output_path / "training_state.json",
         )
+        epoch_config = dict(run_config)
+        epoch_config["history"] = list(history)
+        epoch_config["requested_epochs"] = epochs
+        epoch_config["completed_epochs"] = epoch
+        epoch_config["early_stopped"] = False
+        epoch_config["run_complete"] = False
+        epoch_config["checkpoint_epoch"] = epoch
+        model.save_checkpoint(
+            output_path / f"epoch_{epoch}",
+            tokenizer=tokenizer,
+            extra_config=epoch_config,
+        )
 
         if eval_loader is not None:
             metric = float(epoch_record["eval"]["f1"])

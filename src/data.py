@@ -34,6 +34,10 @@ def format_query_document(query: str, document: str) -> str:
 def format_cgsd_chat_prompt(query: str, document: str) -> str:
     """构造 CGSD 使用的 Qwen chat prompt，停在 assistant 答案之前。
 
+    `<|im_start|>` / `<|im_end|>` 是 Qwen chat/instruct 模型原生的
+    chat template 消息边界标记。训练和推理都保留这套格式，可以让 LoRA
+    看到的上下文与基座模型的指令微调格式一致。
+
     CGSD 的 CRC 分数读取第一个 assistant output token 的 logits，因此
     prompt 必须停在 `<|im_start|>assistant\n` 后面，不能提前追加答案。
     """
@@ -54,6 +58,8 @@ def format_generation_answer(label: int) -> str:
 def format_cgsd_chat_answer(label: int) -> str:
     """构造 LoRA SFT 监督的 CGSD assistant 答案。
 
+    assistant 回复按 Qwen chat/instruct 原生格式以 `<|im_end|>` 结束；
+    真正的分类监督信号是首个规范化答案 token `1/0`。
     文档要求 loss 只覆盖 assistant 回复部分，即规范化的 `1/0` 和
     `<|im_end|>`；prompt 部分在 dataset 中会统一 mask 为 -100。
     """

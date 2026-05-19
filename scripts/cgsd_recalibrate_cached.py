@@ -124,7 +124,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_dir", required=True)
     parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--alpha", type=float, default=0.07)
+    parser.add_argument("--alpha", type=float, default=0.1)
     parser.add_argument("--temperature", type=float, default=15.0)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--eval_set", choices=("pool", "calibration", "final_calibration"), default="pool")
