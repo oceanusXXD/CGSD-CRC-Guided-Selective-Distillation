@@ -248,6 +248,22 @@ python scripts/cgsd_make_baseline_rows.py \
 
 支持的 baseline：`random`、`uncertainty`、`k-center`、`defer-random`。
 
+FEVER 文档版 5 方法 × 3 seed 的 500 样本集可直接生成：
+
+```bash
+python scripts/cgsd_make_fever_documented_sampling_sets.py \
+  --seeds 1,2,3 \
+  --train_size 500 \
+  --test_size 10000 \
+  --guide_size 500 \
+  --temperature 15 \
+  --alpha 0.1
+```
+
+默认输出到 `experiments/inputs/fever/documented_sampling_500_seeds1_2_3_t15_alpha010/`。
+每个 seed 下都会生成 `pool-random`、`pure-accept`、`pure-defer`、
+`fixed-15-85`、`crc-error-mass` 五个训练集。
+
 ## 训练
 
 用累计的 `cgsd_train_rows.jsonl` 训练一个 LoRA round：

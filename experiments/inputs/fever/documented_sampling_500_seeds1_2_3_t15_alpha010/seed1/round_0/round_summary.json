@@ -1,0 +1,62 @@
+{
+  "T": 15.0,
+  "alpha": 0.1,
+  "crc": {
+    "accepted_count": 61,
+    "alpha": 0.1,
+    "empirical_risk": 0.076,
+    "grid_feasible": true,
+    "lambda_hat": 0.55,
+    "loss": "1{routing_score>=lambda}*1{prediction!=teacher_label}",
+    "method": "crc_wrong_accept_risk_v1",
+    "n_calibration": 500,
+    "neighbor_support_enabled": false,
+    "neighbor_support_reference": null,
+    "query_reference_supports": {},
+    "risk_bound": 0.0778443113772455,
+    "temperature": 15.0,
+    "threshold_function": "global_threshold",
+    "wrong_accept_count": 38
+  },
+  "guide_summary": {
+    "accept_count": 61,
+    "accept_error_rate": 0.6229508196721312,
+    "defer_count": 439,
+    "defer_rate": 0.878,
+    "labeled_accept_count": 61,
+    "total": 500,
+    "wrong_accept_count": 38
+  },
+  "lambda_hat": 0.55,
+  "pool_definition": "FEVER \\ (D_test union D_guide)",
+  "pool_summary": {
+    "accept_count": 17605,
+    "accept_error_rate": 0.6476569156489633,
+    "defer_count": 137342,
+    "defer_rate": 0.8863805043014709,
+    "labeled_accept_count": 17605,
+    "total": 154947,
+    "wrong_accept_count": 11402
+  },
+  "round_index": 0,
+  "sampling_statistics": {
+    "c_crc": 0.9658314350797267,
+    "e_all": 0.5,
+    "e_defer": 0.48291571753986334,
+    "eta_crc": 0.0,
+    "r_C": 0.878,
+    "r_U": 0.8863805043014709,
+    "s_accept": 0.11361949569852914,
+    "s_defer": 0.8863805043014709,
+    "tau_crc": 3.010060431932271
+  },
+  "source_predictions_path": "experiments/inputs/fever/round_0/all_student_predictions.jsonl",
+  "split_counts": {
+    "D_guide": 500,
+    "D_test": 10000,
+    "FEVER": 165447,
+    "U_pool": 154947
+  },
+  "student": "Qwen3-0.6B round0 zero-shot predictions",
+  "temperature": 15.0
+}
