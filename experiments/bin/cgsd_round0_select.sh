@@ -6,6 +6,16 @@ BUDGET="${BUDGET:-250}"
 TEACHER_BETA="${TEACHER_BETA:-1}"
 N_CALIBRATION="${N_CALIBRATION:-200}"
 N_FINAL_CALIBRATION="${N_FINAL_CALIBRATION:-0}"
+SELECTION_METHOD="${SELECTION_METHOD:-crc-error-mass}"
+ACCEPT_STRATEGY="${ACCEPT_STRATEGY:-random}"
+DEFER_STRATEGY="${DEFER_STRATEGY:-random}"
+SELECTION_BUFFER_MULTIPLIER="${SELECTION_BUFFER_MULTIPLIER:-1}"
+TEACHER_CONFIDENCE_FILTER="${TEACHER_CONFIDENCE_FILTER:-0}"
+
+EXTRA_SELECT_ARGS=()
+if [[ "$TEACHER_CONFIDENCE_FILTER" == "1" || "$TEACHER_CONFIDENCE_FILTER" == "true" ]]; then
+  EXTRA_SELECT_ARGS+=(--teacher_confidence_filter)
+fi
 
 python scripts/cgsd_prepare.py \
   --data_path "$DATA" \
@@ -42,8 +52,13 @@ python scripts/cgsd_select.py \
   --embedding_dim "$DIM" \
   --budget "$BUDGET" \
   --teacher_beta "$TEACHER_BETA" \
-  --cache_policy "$CACHE_POLICY"
+  --selection_method "$SELECTION_METHOD" \
+  --accept_strategy "$ACCEPT_STRATEGY" \
+  --defer_strategy "$DEFER_STRATEGY" \
+  --selection_buffer_multiplier "$SELECTION_BUFFER_MULTIPLIER" \
+  --cache_policy "$CACHE_POLICY" \
+  "${EXTRA_SELECT_ARGS[@]}"
 
-printf 'round0 select complete: %s\n' "$OUT"
+printf 'round0 select complete: %s method=%s accept=%s defer=%s\n' "$OUT" "$SELECTION_METHOD" "$ACCEPT_STRATEGY" "$DEFER_STRATEGY"
 printf 'check: %s\n' "$OUT/round_0/round_summary.json"
 printf 'selected rows: %s\n' "$OUT/cgsd_train_rows.jsonl"

@@ -15,7 +15,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 
 
-DEFAULT_LAMBDA_GRID = tuple(round(index / 100.0, 2) for index in range(101))
+DEFAULT_LAMBDA_GRID = tuple(round(index / 100.0, 2) for index in range(50, 101))
 DEFAULT_TEMPERATURE_GRID = (5.0, 10.0, 15.0, 20.0)
 NEIGHBOR_SUPPORT_EPS = 1e-6
 QUERY_REFERENCE_SHRINKAGE_K = 12.0
@@ -106,26 +106,98 @@ class DeferSelection:
 
 
 @dataclass(frozen=True)
-class RoundStopDecision:
-    """迭代轮停止准则的逐项判定结果。"""
+class AdaptiveSamplingPlan:
+    """按 CRC defer rate 和错误浓缩度得到的本轮选样预算。"""
 
-    should_stop: bool
-    reasons: list[str]
-    budget_exhausted: bool
-    max_round_reached: bool
-    marginal_gain_too_small: bool
-    economic_stop: bool
-    delta_defer_rate: float
+    temperature: float
+    alpha: float | None
+    lambda_hat: float
+    tau_crc: float
+    budget: int
+    r_U: float
+    r_C: float
+    e_all: float
+    e_defer: float
+    c_crc: float
+    eta_crc: float
+    s_accept: float
+    s_defer: float
+    B_accept: int
+    B_defer: int
+    pool_accept_count: int
+    pool_defer_count: int
+    calibration_count: int
+    calibration_defer_count: int
+    calibration_error_count: int
+    calibration_defer_error_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """导出 CRC Error-Mass 诊断量。
+
+        `budget/B_accept/B_defer` 是 selection stage 的临时执行量，不写入
+        公式诊断记录，避免和 CRC 校准字段混在一起。
+        """
+        return {
+            "T": float(self.temperature),
+            "alpha": None if self.alpha is None else float(self.alpha),
+            "lambda_hat": float(self.lambda_hat),
+            "tau_crc": float(self.tau_crc),
+            "r_U": float(self.r_U),
+            "r_C": float(self.r_C),
+            "e_all": float(self.e_all),
+            "e_defer": float(self.e_defer),
+            "c_crc": float(self.c_crc),
+            "eta_crc": float(self.eta_crc),
+            "s_accept": float(self.s_accept),
+            "s_defer": float(self.s_defer),
+            "pool_accept_count": int(self.pool_accept_count),
+            "pool_defer_count": int(self.pool_defer_count),
+            "calibration_count": int(self.calibration_count),
+            "calibration_defer_count": int(self.calibration_defer_count),
+            "calibration_error_count": int(self.calibration_error_count),
+            "calibration_defer_error_count": int(self.calibration_defer_error_count),
+        }
+
+
+@dataclass(frozen=True)
+class AdaptiveSelection:
+    """按自适应 accept/defer 预算选出的蒸馏样本。"""
+
+    distillation_ids: list[str]
+    accept_ids: list[str]
+    defer_ids: list[str]
+    requested_budget: int
+    selected_budget: int
+    requested_accept_budget: int
+    requested_defer_budget: int
+    selected_accept_budget: int
+    selected_defer_budget: int
+    accept_strategy: str
+    defer_strategy: str
+    selection_method: str = "adaptive_accept_defer"
+    pool_candidate_count: int = 0
+    accept_candidate_count: int = 0
+    defer_candidate_count: int = 0
+    shortfall: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "should_stop": bool(self.should_stop),
-            "reasons": list(self.reasons),
-            "budget_exhausted": bool(self.budget_exhausted),
-            "max_round_reached": bool(self.max_round_reached),
-            "marginal_gain_too_small": bool(self.marginal_gain_too_small),
-            "economic_stop": bool(self.economic_stop),
-            "delta_defer_rate": float(self.delta_defer_rate),
+            "distillation_ids": list(self.distillation_ids),
+            "accept_ids": list(self.accept_ids),
+            "defer_ids": list(self.defer_ids),
+            "requested_budget": int(self.requested_budget),
+            "selected_budget": int(self.selected_budget),
+            "requested_accept_budget": int(self.requested_accept_budget),
+            "requested_defer_budget": int(self.requested_defer_budget),
+            "selected_accept_budget": int(self.selected_accept_budget),
+            "selected_defer_budget": int(self.selected_defer_budget),
+            "accept_strategy": str(self.accept_strategy),
+            "defer_strategy": str(self.defer_strategy),
+            "selection_method": str(self.selection_method),
+            "pool_candidate_count": int(self.pool_candidate_count),
+            "accept_candidate_count": int(self.accept_candidate_count),
+            "defer_candidate_count": int(self.defer_candidate_count),
+            "shortfall": bool(self.shortfall),
         }
 
 
@@ -525,6 +597,7 @@ def apply_crc_decisions(
     embeddings_by_id: Mapping[str, np.ndarray] | None = None,
     support_rows: Sequence[Mapping[str, Any]] | None = None,
     crc_result: CRCResult | Mapping[str, Any] | None = None,
+    neighbor_exclude_self: bool = False,
 ) -> list[dict[str, Any]]:
     """用固定 lambda 和 temperature 给样本打 accept/defer 决策。
 
@@ -552,7 +625,7 @@ def apply_crc_decisions(
             routed,
             embeddings_by_id=embeddings_by_id or {},
             support_rows=support_routed,
-            exclude_self=False,
+            exclude_self=bool(neighbor_exclude_self),
         )
         if isinstance(crc_result, CRCResult):
             reference_support = float(crc_result.neighbor_support_reference or NEIGHBOR_SUPPORT_EPS)
@@ -615,6 +688,113 @@ def summarize_crc_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]
             else 0.0
         ),
     }
+
+
+def crc_margin_cutoff(lambda_hat: float, temperature: float) -> float:
+    """把 routing-score 阈值换算成原始 score 空间的 margin cutoff。
+
+    文档里的公式是 tau_crc = T * logit(lambda)。当 lambda 超出
+    [0, 1] 边界时，用无穷值表达全 accept / 全 defer 的极限情况。
+    """
+    temp = float(temperature)
+    if not math.isfinite(temp) or temp <= 0.0:
+        raise ValueError("temperature must be a positive finite number")
+    threshold = float(lambda_hat)
+    if not math.isfinite(threshold):
+        raise ValueError("lambda_hat must be finite")
+    if threshold <= 0.0:
+        return float("-inf")
+    if threshold >= 1.0:
+        return float("inf")
+    return float(temp * math.log(threshold / (1.0 - threshold)))
+
+
+def _round_half_up(value: float) -> int:
+    return int(math.floor(float(value) + 0.5))
+
+
+def _rate(count: int, total: int) -> float:
+    return float(count / total) if int(total) > 0 else 0.0
+
+
+def compute_adaptive_sampling_plan(
+    calibration_decisions: Sequence[Mapping[str, Any]],
+    pool_decisions: Sequence[Mapping[str, Any]],
+    *,
+    budget: int,
+    temperature: float,
+    lambda_hat: float,
+    alpha: float | None = None,
+) -> AdaptiveSamplingPlan:
+    """根据更新文档计算 accept/defer 自适应选样比例和预算。
+
+    输入必须已经是 CRC 判定后的行，至少包含 `defer`，并且校准行需要
+    带有 label/groundtruth 与 prediction/score。这里严格按文档公式记录
+    r_U、r_C、e_all、e_defer、c_crc、eta_crc、s_accept/s_defer 和预算。
+    """
+    requested_budget = int(max(0, budget))
+    calibration_rows = [dict(row) for row in calibration_decisions]
+    pool_rows = [dict(row) for row in pool_decisions]
+    n_calibration = len(calibration_rows)
+    if n_calibration == 0:
+        raise ValueError("adaptive sampling needs non-empty calibration decisions")
+
+    pool_total = len(pool_rows)
+    pool_defer_count = sum(1 for row in pool_rows if bool(row.get("defer", False)))
+    pool_accept_count = int(pool_total - pool_defer_count)
+    r_U = _rate(pool_defer_count, pool_total)
+
+    calibration_defer_rows = [row for row in calibration_rows if bool(row.get("defer", False))]
+    calibration_defer_count = len(calibration_defer_rows)
+    calibration_error_count = sum(1 for row in calibration_rows if _row_prediction(row) != _row_label(row))
+    calibration_defer_error_count = sum(
+        1 for row in calibration_defer_rows if _row_prediction(row) != _row_label(row)
+    )
+    r_C = _rate(calibration_defer_count, n_calibration)
+    e_all = _rate(calibration_error_count, n_calibration)
+    e_defer = _rate(calibration_defer_error_count, calibration_defer_count)
+
+    if calibration_defer_count == 0 or calibration_error_count == 0 or e_all <= 0.0:
+        c_crc = 1.0
+        eta_crc = 0.0
+    else:
+        c_crc = float(e_defer / e_all) if e_all > 0.0 else 1.0
+        if c_crc <= 1.0 or r_C <= 0.0 or r_C >= 1.0:
+            eta_crc = 0.0
+        else:
+            denominator = math.log(1.0 / r_C)
+            eta_crc = 0.0 if denominator <= 0.0 else math.log(c_crc) / denominator
+            eta_crc = float(max(0.0, min(1.0, eta_crc)))
+
+    s_defer = float(r_U + eta_crc * ((1.0 - r_U) ** 2))
+    s_defer = float(max(0.0, min(1.0, s_defer)))
+    s_accept = float(1.0 - s_defer)
+    B_defer = max(0, min(requested_budget, _round_half_up(requested_budget * s_defer)))
+    B_accept = int(requested_budget - B_defer)
+
+    return AdaptiveSamplingPlan(
+        temperature=float(temperature),
+        alpha=None if alpha is None else float(alpha),
+        lambda_hat=float(lambda_hat),
+        tau_crc=crc_margin_cutoff(lambda_hat, temperature),
+        budget=requested_budget,
+        r_U=r_U,
+        r_C=r_C,
+        e_all=e_all,
+        e_defer=e_defer,
+        c_crc=float(c_crc),
+        eta_crc=float(eta_crc),
+        s_accept=s_accept,
+        s_defer=s_defer,
+        B_accept=B_accept,
+        B_defer=B_defer,
+        pool_accept_count=pool_accept_count,
+        pool_defer_count=pool_defer_count,
+        calibration_count=n_calibration,
+        calibration_defer_count=calibration_defer_count,
+        calibration_error_count=calibration_error_count,
+        calibration_defer_error_count=calibration_defer_error_count,
+    )
 
 
 def choose_temperature(
@@ -810,6 +990,342 @@ def k_center_greedy(
     return selected_ids[:requested]
 
 
+def _unique_ids_in_order(rows: Sequence[Mapping[str, Any]], *, defer: bool, blocked: set[str]) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        sample_id = _row_id(row)
+        if sample_id in seen or sample_id in blocked:
+            continue
+        if bool(row.get("defer", False)) != bool(defer):
+            continue
+        seen.add(sample_id)
+        ids.append(sample_id)
+    return ids
+
+
+def _select_random_ids(candidate_ids: Sequence[str], *, k: int, seed: int) -> list[str]:
+    ids = sorted(str(sample_id) for sample_id in candidate_ids)
+    random.Random(seed).shuffle(ids)
+    return ids[: int(max(0, k))]
+
+
+def _select_high_confidence_accept_ids(
+    candidate_ids: Sequence[str],
+    rows_by_id: Mapping[str, Mapping[str, Any]],
+    *,
+    k: int,
+) -> list[str]:
+    return sorted(
+        (str(sample_id) for sample_id in candidate_ids),
+        key=lambda sample_id: (
+            -float(rows_by_id[sample_id].get("routing_score", 0.0) or 0.0),
+            sample_id,
+        ),
+    )[: int(max(0, k))]
+
+
+def _select_accept_ids(
+    candidate_ids: Sequence[str],
+    rows_by_id: Mapping[str, Mapping[str, Any]],
+    *,
+    k: int,
+    seed: int,
+    strategy: str,
+) -> list[str]:
+    if int(k) <= 0:
+        return []
+    if strategy == "random":
+        return _select_random_ids(candidate_ids, k=k, seed=seed)
+    if strategy == "high-confidence":
+        return _select_high_confidence_accept_ids(candidate_ids, rows_by_id, k=k)
+    raise ValueError("accept_strategy must be one of {'random', 'high-confidence'}")
+
+
+def _select_defer_ids(
+    candidate_ids: Sequence[str],
+    embeddings_by_id: Mapping[str, np.ndarray] | None,
+    *,
+    k: int,
+    seed: int,
+    strategy: str,
+) -> list[str]:
+    if int(k) <= 0:
+        return []
+    if strategy == "random":
+        return _select_random_ids(candidate_ids, k=k, seed=seed)
+    if strategy == "k-center":
+        if embeddings_by_id is None:
+            raise ValueError("embeddings_by_id is required when defer_strategy='k-center'")
+        return k_center_greedy(candidate_ids, embeddings_by_id, k=int(k), seed=int(seed))
+    raise ValueError("defer_strategy must be one of {'random', 'k-center'}")
+
+
+def _selection_from_ids(
+    *,
+    selected_ids: list[str],
+    accept_ids: list[str],
+    defer_ids: list[str],
+    requested_budget: int,
+    requested_accept_budget: int,
+    requested_defer_budget: int,
+    accept_strategy: str,
+    defer_strategy: str,
+    selection_method: str,
+    pool_candidate_count: int,
+    accept_candidate_count: int,
+    defer_candidate_count: int,
+) -> AdaptiveSelection:
+    shortfall = len(selected_ids) < int(requested_budget)
+    return AdaptiveSelection(
+        distillation_ids=list(selected_ids),
+        accept_ids=list(accept_ids),
+        defer_ids=list(defer_ids),
+        requested_budget=int(requested_budget),
+        selected_budget=len(selected_ids),
+        requested_accept_budget=int(requested_accept_budget),
+        requested_defer_budget=int(requested_defer_budget),
+        selected_accept_budget=len(accept_ids),
+        selected_defer_budget=len(defer_ids),
+        accept_strategy=str(accept_strategy),
+        defer_strategy=str(defer_strategy),
+        selection_method=str(selection_method),
+        pool_candidate_count=int(pool_candidate_count),
+        accept_candidate_count=int(accept_candidate_count),
+        defer_candidate_count=int(defer_candidate_count),
+        shortfall=bool(shortfall),
+    )
+
+
+def _allocated_side_counts(
+    *,
+    requested_accept: int,
+    requested_defer: int,
+    available_accept: int,
+    available_defer: int,
+) -> tuple[int, int]:
+    accept_count = min(int(requested_accept), int(available_accept))
+    defer_count = min(int(requested_defer), int(available_defer))
+    return accept_count, defer_count
+
+
+def select_adaptive_distillation_samples(
+    prediction_rows: Sequence[Mapping[str, Any]],
+    *,
+    sampling_plan: AdaptiveSamplingPlan,
+    already_selected_ids: Iterable[str],
+    embeddings_by_id: Mapping[str, np.ndarray] | None = None,
+    seed: int = 42,
+    accept_strategy: str = "random",
+    defer_strategy: str = "random",
+) -> AdaptiveSelection:
+    """按自适应预算从 accept/defer 两侧选择本轮蒸馏样本。
+
+    accept 侧作为 easy anchor，defer 侧作为 hard / informative samples。
+    若某一侧候选不足，只采样该侧全部候选并记录 shortfall，不跨侧补样。
+    """
+    rows = [dict(row) for row in prediction_rows]
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        rows_by_id.setdefault(_row_id(row), row)
+    blocked = {str(sample_id) for sample_id in already_selected_ids}
+    accept_candidates = _unique_ids_in_order(rows, defer=False, blocked=blocked)
+    defer_candidates = _unique_ids_in_order(rows, defer=True, blocked=blocked)
+    accept_count, defer_count = _allocated_side_counts(
+        requested_accept=int(sampling_plan.B_accept),
+        requested_defer=int(sampling_plan.B_defer),
+        available_accept=len(accept_candidates),
+        available_defer=len(defer_candidates),
+    )
+    accept_ids = _select_accept_ids(
+        accept_candidates,
+        rows_by_id,
+        k=accept_count,
+        seed=int(seed),
+        strategy=str(accept_strategy),
+    )
+    defer_ids = _select_defer_ids(
+        defer_candidates,
+        embeddings_by_id,
+        k=defer_count,
+        seed=int(seed) + 1,
+        strategy=str(defer_strategy),
+    )
+    selected_ids = [*accept_ids, *defer_ids]
+    return AdaptiveSelection(
+        distillation_ids=selected_ids,
+        accept_ids=accept_ids,
+        defer_ids=defer_ids,
+        requested_budget=int(sampling_plan.budget),
+        selected_budget=len(selected_ids),
+        requested_accept_budget=int(sampling_plan.B_accept),
+        requested_defer_budget=int(sampling_plan.B_defer),
+        selected_accept_budget=len(accept_ids),
+        selected_defer_budget=len(defer_ids),
+        accept_strategy=str(accept_strategy),
+        defer_strategy=str(defer_strategy),
+        selection_method="adaptive_accept_defer",
+        pool_candidate_count=len(rows),
+        accept_candidate_count=len(accept_candidates),
+        defer_candidate_count=len(defer_candidates),
+        shortfall=len(selected_ids) < int(sampling_plan.budget),
+    )
+
+
+def _within_pool(rows: Sequence[Mapping[str, Any]], *, blocked_ids: set[str]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        sample_id = _row_id(row)
+        if sample_id in blocked_ids:
+            continue
+        output.append(dict(row))
+    return output
+
+
+def select_documented_training_samples(
+    prediction_rows: Sequence[Mapping[str, Any]],
+    *,
+    method: str,
+    budget: int,
+    seed: int,
+    blocked_ids: Iterable[str] = (),
+    sampling_plan: AdaptiveSamplingPlan | None = None,
+    accept_strategy: str = "random",
+    defer_strategy: str = "random",
+    embeddings_by_id: Mapping[str, np.ndarray] | None = None,
+) -> AdaptiveSelection:
+    """按文档中的五种采样方法从同一个 pool 里取样本。
+
+    方法定义：
+    - pool-random: 从整个 pool 随机取样
+    - pure-accept: 只从 accept 集随机取样
+    - pure-defer: 只从 defer 集随机取样
+    - fixed-15-85: 固定 15% / 85% 混合
+    - crc-error-mass: 按 CRC Error-Mass 自适应预算取样
+    """
+    method_name = str(method)
+    rows = [dict(row) for row in prediction_rows]
+    blocked = {str(sample_id) for sample_id in blocked_ids}
+    pool_rows = _within_pool(rows, blocked_ids=blocked)
+    rows_by_id = {_row_id(row): row for row in pool_rows}
+    pool_ids = [_row_id(row) for row in pool_rows]
+    accept_ids = _unique_ids_in_order(pool_rows, defer=False, blocked=set())
+    defer_ids = _unique_ids_in_order(pool_rows, defer=True, blocked=set())
+
+    if method_name == "pool-random":
+        selected_ids = _select_random_ids(pool_ids, k=int(budget), seed=int(seed))
+        selected_accept_ids = [sample_id for sample_id in selected_ids if not bool(rows_by_id[sample_id].get("defer", False))]
+        selected_defer_ids = [sample_id for sample_id in selected_ids if bool(rows_by_id[sample_id].get("defer", False))]
+        return _selection_from_ids(
+            selected_ids=selected_ids,
+            accept_ids=selected_accept_ids,
+            defer_ids=selected_defer_ids,
+            requested_budget=int(budget),
+            requested_accept_budget=int(budget),
+            requested_defer_budget=0,
+            accept_strategy="random",
+            defer_strategy="random",
+            selection_method=method_name,
+            pool_candidate_count=len(pool_ids),
+            accept_candidate_count=len(accept_ids),
+            defer_candidate_count=len(defer_ids),
+        )
+
+    if method_name == "pure-accept":
+        selected_accept_ids = _select_random_ids(accept_ids, k=int(budget), seed=int(seed))
+        return _selection_from_ids(
+            selected_ids=selected_accept_ids,
+            accept_ids=selected_accept_ids,
+            defer_ids=[],
+            requested_budget=int(budget),
+            requested_accept_budget=int(budget),
+            requested_defer_budget=0,
+            accept_strategy="random",
+            defer_strategy="random",
+            selection_method=method_name,
+            pool_candidate_count=len(pool_ids),
+            accept_candidate_count=len(accept_ids),
+            defer_candidate_count=len(defer_ids),
+        )
+
+    if method_name == "pure-defer":
+        selected_defer_ids = _select_random_ids(defer_ids, k=int(budget), seed=int(seed))
+        return _selection_from_ids(
+            selected_ids=selected_defer_ids,
+            accept_ids=[],
+            defer_ids=selected_defer_ids,
+            requested_budget=int(budget),
+            requested_accept_budget=0,
+            requested_defer_budget=int(budget),
+            accept_strategy="random",
+            defer_strategy="random",
+            selection_method=method_name,
+            pool_candidate_count=len(pool_ids),
+            accept_candidate_count=len(accept_ids),
+            defer_candidate_count=len(defer_ids),
+        )
+
+    if method_name == "fixed-15-85":
+        accept_budget = int(round(int(budget) * 0.15))
+        defer_budget = int(budget) - accept_budget
+        selected_accept_ids = _select_random_ids(accept_ids, k=accept_budget, seed=int(seed))
+        selected_defer_ids = _select_random_ids(defer_ids, k=defer_budget, seed=int(seed) + 1)
+        selected_ids = [*selected_accept_ids, *selected_defer_ids]
+        return _selection_from_ids(
+            selected_ids=selected_ids,
+            accept_ids=selected_accept_ids,
+            defer_ids=selected_defer_ids,
+            requested_budget=int(budget),
+            requested_accept_budget=accept_budget,
+            requested_defer_budget=defer_budget,
+            accept_strategy="random",
+            defer_strategy="random",
+            selection_method=method_name,
+            pool_candidate_count=len(pool_ids),
+            accept_candidate_count=len(accept_ids),
+            defer_candidate_count=len(defer_ids),
+        )
+
+    if method_name == "crc-error-mass":
+        if sampling_plan is None:
+            raise ValueError("crc-error-mass requires sampling_plan")
+        if int(sampling_plan.budget) != int(budget):
+            raise ValueError("sampling_plan budget must match the requested budget")
+        accept_count = min(int(sampling_plan.B_accept), len(accept_ids))
+        defer_count = min(int(sampling_plan.B_defer), len(defer_ids))
+        selected_accept_ids = _select_accept_ids(
+            accept_ids,
+            rows_by_id,
+            k=accept_count,
+            seed=int(seed),
+            strategy=str(accept_strategy),
+        )
+        selected_defer_ids = _select_defer_ids(
+            defer_ids,
+            embeddings_by_id,
+            k=defer_count,
+            seed=int(seed) + 1,
+            strategy=str(defer_strategy),
+        )
+        selected_ids = [*selected_accept_ids, *selected_defer_ids]
+        return _selection_from_ids(
+            selected_ids=selected_ids,
+            accept_ids=selected_accept_ids,
+            defer_ids=selected_defer_ids,
+            requested_budget=int(budget),
+            requested_accept_budget=int(sampling_plan.B_accept),
+            requested_defer_budget=int(sampling_plan.B_defer),
+            accept_strategy=str(accept_strategy),
+            defer_strategy=str(defer_strategy),
+            selection_method=method_name,
+            pool_candidate_count=len(pool_ids),
+            accept_candidate_count=len(accept_ids),
+            defer_candidate_count=len(defer_ids),
+        )
+
+    raise ValueError("method must be one of {'pool-random', 'pure-accept', 'pure-defer', 'fixed-15-85', 'crc-error-mass'}")
+
+
 def select_defer_k_center_samples(
     prediction_rows: Sequence[Mapping[str, Any]],
     *,
@@ -852,72 +1368,6 @@ def teacher_weight(confidence: float, beta: float) -> float:
     """
     value = max(0.0, min(1.0, float(confidence)))
     return float(value**float(beta)) if float(beta) != 0.0 else 1.0
-
-
-def evaluate_stop_criteria(
-    *,
-    previous_defer_rate: float,
-    current_defer_rate: float,
-    round_selected_count: int,
-    total_selected_count: int,
-    total_budget: int,
-    completed_rounds: int,
-    max_rounds: int,
-    pool_size: int,
-    min_delta_defer_rate: float = 0.005,
-    use_economic_stop: bool = True,
-) -> RoundStopDecision:
-    """按文档 8.4.5 的四条规则判断是否停止迭代。"""
-    delta = float(previous_defer_rate) - float(current_defer_rate)
-    budget_exhausted = int(total_selected_count) >= int(total_budget)
-    max_round_reached = int(completed_rounds) >= int(max_rounds)
-    marginal_gain_too_small = delta < float(min_delta_defer_rate)
-    economic_stop = bool(use_economic_stop and (delta * int(pool_size)) < int(round_selected_count))
-    reasons: list[str] = []
-    if budget_exhausted:
-        reasons.append("budget_exhausted")
-    if max_round_reached:
-        reasons.append("max_round_reached")
-    if marginal_gain_too_small:
-        reasons.append("marginal_defer_reduction_below_threshold")
-    if economic_stop:
-        reasons.append("economic_stop_distillation_cost_exceeds_defer_savings")
-    return RoundStopDecision(
-        should_stop=bool(reasons),
-        reasons=reasons,
-        budget_exhausted=budget_exhausted,
-        max_round_reached=max_round_reached,
-        marginal_gain_too_small=marginal_gain_too_small,
-        economic_stop=economic_stop,
-        delta_defer_rate=float(delta),
-    )
-
-
-def should_stop_after_round(
-    *,
-    previous_defer_rate: float,
-    current_defer_rate: float,
-    selected_count: int,
-    pool_size: int,
-    min_delta_defer_rate: float = 0.005,
-    use_economic_stop: bool = True,
-) -> tuple[bool, str]:
-    """兼容旧调用的停止判断包装。"""
-    decision = evaluate_stop_criteria(
-        previous_defer_rate=previous_defer_rate,
-        current_defer_rate=current_defer_rate,
-        round_selected_count=selected_count,
-        total_selected_count=selected_count,
-        total_budget=10**18,
-        completed_rounds=0,
-        max_rounds=10**18,
-        pool_size=pool_size,
-        min_delta_defer_rate=min_delta_defer_rate,
-        use_economic_stop=use_economic_stop,
-    )
-    if decision.should_stop:
-        return True, decision.reasons[0]
-    return False, ""
 
 
 def build_deployment_rows(
@@ -973,23 +1423,26 @@ def build_deployment_rows(
 
 
 __all__ = [
+    "AdaptiveSamplingPlan",
+    "AdaptiveSelection",
     "CRCResult",
     "CGSDEmbeddingError",
     "DeferSelection",
     "DEFAULT_LAMBDA_GRID",
     "DEFAULT_TEMPERATURE_GRID",
     "TemperatureChoice",
-    "RoundStopDecision",
     "apply_crc_decisions",
     "attach_routing_scores",
     "build_deployment_rows",
     "calibrate_crc",
     "choose_temperature",
+    "compute_adaptive_sampling_plan",
+    "crc_margin_cutoff",
     "crc_risk_bound",
-    "evaluate_stop_criteria",
     "k_center_greedy",
+    "select_adaptive_distillation_samples",
     "select_defer_k_center_samples",
-    "should_stop_after_round",
+    "select_documented_training_samples",
     "sigmoid_abs_margin",
     "split_calibration_pool_ids",
     "summarize_crc_decisions",

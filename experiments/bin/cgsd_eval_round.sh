@@ -21,8 +21,6 @@ python scripts/cgsd_calibrate.py \
   --alpha "$ALPHA" \
   --embeddings_path "$EMB" \
   --previous_round_summary_path "$OUT/round_$PREV_ROUND/round_summary.json" \
-  --previous_selection_summary_path "$OUT/round_$PREV_ROUND/selection_summary.json" \
-  --train_rows_path "$OUT/cgsd_train_rows.jsonl" \
   --cache_policy "$CACHE_POLICY"
 
 printf 'evaluation complete: round=%s summary=%s\n' "$ROUND" "$OUT/round_$ROUND/round_summary.json"

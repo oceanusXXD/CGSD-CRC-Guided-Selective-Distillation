@@ -8,9 +8,9 @@
 
 1. 小模型先对引导集、认证集和候选池做预测，并保存 `1/0` logprob margin。
 2. CRC 用引导集校准 accept/defer 阈值。
-3. 从 defer 集里选样本标注，当前主策略是 k-Center Greedy。
+3. 从同一个 pool 中按指定方法选择训练样本；主方法是 CRC Error-Mass。
 4. 用累计标注样本训练下一轮 LoRA。
-5. 循环到预算用完或 defer 率下降不明显。
+5. 按实验设定继续后续轮次。
 6. 最终用一直隔离的认证集做最终 CRC 认证。
 
 ## 环境
@@ -176,17 +176,30 @@ python scripts/cgsd_calibrate.py \
 - 传入 `--embeddings_path` 时启用 neighbor support，自适应调整每条样本的
   `decision_threshold`。
 - 风险修正为 `n/(n+1) * empirical_risk + 1/(n+1)`。
+- 同时记录 `tau_crc = T * logit(lambda_hat)`，以及 guide 上的
+  `r_C/e_all/e_defer/c_crc/eta_crc` 和 `s_accept/s_defer` 诊断量。
 
 主要输出：
 
 - `pool_crc_predictions.jsonl`：每条 pool 样本的 `routing_score`、
   `decision_threshold`、`crc_decision`、`defer`。
 - `round_summary.json`：`lambda_hat`、`temperature`、`pool_summary`、
-  `pool_metrics`、停止判断。
+  `guide_summary`、`sampling_statistics`、`pool_metrics`。这里不记录选样预算；
+  具体样本数只在 selection stage 根据 `--budget` 临时计算。
 
 ## 选数据
 
-主策略是从当前 defer 集里做 k-Center Greedy：
+主策略按 CRC defer rate 和 guide 错误浓缩度自适应分配 accept/defer 预算：
+
+```text
+s_defer = r_U + eta_crc * (1 - r_U)^2
+s_accept = 1 - s_defer
+B_defer = round(B_t * s_defer)
+B_accept = B_t - B_defer
+```
+
+其中 accept 样本作为 easy anchor，defer 样本作为 hard samples。默认策略是
+accept random + defer random；defer k-Center 作为 diversity ablation：
 
 ```bash
 python scripts/cgsd_select.py \
@@ -195,17 +208,31 @@ python scripts/cgsd_select.py \
   --embeddings_path experiments/inputs/fever/embeddings.npy \
   --embedding_dim 2560 \
   --budget 150 \
+  --selection_method crc-error-mass \
+  --accept_strategy random \
+  --defer_strategy random \
   --seed 1 \
   --cache_policy overwrite
 ```
 
 逻辑：
 
-- 候选集来自 `pool_crc_predictions.jsonl` 中 `defer=true` 的样本。
+- 候选集来自 `pool_crc_predictions.jsonl` 中的 accept/defer 决策。
 - 排除已经标注过的样本和引导集样本。
-- embedding 先单位归一化。
-- 第一个点选离 defer 候选质心最远的样本。
-- 后续每轮选“到已选集合最近距离最大”的样本。
+- `--selection_method pool-random`：忽略 accept/defer，直接从 pool 均匀随机采样。
+- `--selection_method pure-accept`：只从 accept 侧均匀随机采样；不足时取全部并记录
+  `shortfall`。
+- `--selection_method pure-defer`：只从 defer 侧均匀随机采样；不足时取全部并记录
+  `shortfall`。
+- `--selection_method fixed-15-85`：固定 15% accept / 85% defer。
+- `--selection_method crc-error-mass`：用 `s_accept/s_defer` 将 `--budget`
+  拆成本轮 accept/defer 采样数量。
+- `--accept_strategy random` 随机选 accept anchor；`high-confidence` 优先选
+  `routing_score` 高的 accept。
+- `--defer_strategy random` 随机选 defer；`k-center` 在 defer embedding 空间中
+  先单位归一化，再执行 k-Center Greedy。
+- `--selection_buffer_multiplier 1.25 --teacher_confidence_filter` 可先多选 buffer，
+  再按 teacher confidence 保留目标预算内最可靠的样本。
 
 对照 baseline 可用：
 
@@ -314,7 +341,7 @@ PY
 
 ## 最终认证
 
-中间轮的 `round_summary.json` 用的是 `D_guide`，主要服务于选样和停止判断。
+中间轮的 `round_summary.json` 用的是 `D_guide`，主要服务于 accept/defer 划分和选样诊断。
 最终数学认证应当在训练结束后，用最终模型对 `D_cert` 预测，再只用
 `final_calibration_student_predictions.jsonl` 做一次 CRC 校准，得到
 最终阈值 `lambda_hat*`。`D_cert` 在此之前不能参与训练、选样或中间 CRC。

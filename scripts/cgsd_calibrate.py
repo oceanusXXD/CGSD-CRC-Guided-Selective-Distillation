@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -36,7 +37,7 @@ from algorithms.cgsd import (
     apply_crc_decisions,
     calibrate_crc,
     choose_temperature,
-    evaluate_stop_criteria,
+    crc_margin_cutoff,
     summarize_crc_decisions,
 )
 from scripts.run_cgsd import load_embeddings
@@ -53,16 +54,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pool_crc_predictions_path", default=None)
     parser.add_argument("--round_summary_path", default=None)
     parser.add_argument("--previous_round_summary_path", default=None)
-    parser.add_argument("--previous_selection_summary_path", default=None)
-    parser.add_argument("--train_rows_path", default=None)
     parser.add_argument("--alpha", type=float, default=0.1)
     parser.add_argument("--temperatures", default=",".join(str(value) for value in DEFAULT_TEMPERATURE_GRID))
     parser.add_argument("--threshold", type=float, default=0.0)
-    parser.add_argument("--total_budget", type=int, default=500)
-    parser.add_argument("--budget_schedule", default="250,150,100")
-    parser.add_argument("--max_rounds", type=int, default=3)
-    parser.add_argument("--min_delta_defer_rate", type=float, default=0.005)
-    parser.add_argument("--no_economic_stop", action="store_true", default=False)
     parser.add_argument("--temperature", type=float, default=15.0)
     parser.add_argument("--embeddings_path", default=None)
     parser.add_argument("--usage_path", default=None)
@@ -78,12 +72,64 @@ def parse_float_csv(text: str) -> list[float]:
     return values
 
 
-def parse_int_csv(text: str) -> list[int]:
-    """解析 CLI 传入的每轮预算表。"""
-    values = [int(part.strip()) for part in str(text or "").split(",") if part.strip()]
-    if not values:
-        raise ValueError("--budget_schedule cannot be empty")
-    return values
+def _decision_error_count(rows: list[dict[str, object]]) -> int:
+    count = 0
+    for row in rows:
+        prediction = binary_to_int(row.get("prediction", int(float(row.get("score", 0.0) or 0.0) > 0.0)), field_name="calibration prediction")
+        label = binary_to_int(row.get("label", row.get("groundtruth")), field_name="calibration label")
+        count += int(prediction != label)
+    return count
+
+
+def compute_crc_sampling_statistics(
+    calibration_decisions: list[dict[str, object]],
+    pool_decisions: list[dict[str, object]],
+    *,
+    temperature: float,
+    lambda_hat: float,
+) -> dict[str, float]:
+    """计算和预算无关的 CRC Error-Mass 诊断量。
+
+    这些字段描述当前 CRC 划分和 guide 错误浓缩度；真正的样本数量只在
+    selection stage 根据显式 `--budget` 计算。
+    """
+    n_calibration = len(calibration_decisions)
+    if n_calibration == 0:
+        raise ValueError("calibration decisions cannot be empty")
+    pool_total = len(pool_decisions)
+    pool_defer_count = sum(1 for row in pool_decisions if bool(row.get("defer", False)))
+    calibration_defer_rows = [row for row in calibration_decisions if bool(row.get("defer", False))]
+    calibration_error_count = _decision_error_count(calibration_decisions)
+    calibration_defer_error_count = _decision_error_count(calibration_defer_rows)
+    r_u = float(pool_defer_count / pool_total) if pool_total else 0.0
+    r_c = float(len(calibration_defer_rows) / n_calibration)
+    e_all = float(calibration_error_count / n_calibration)
+    e_defer = (
+        float(calibration_defer_error_count / len(calibration_defer_rows))
+        if calibration_defer_rows
+        else 0.0
+    )
+    if not calibration_defer_rows or calibration_error_count == 0 or e_all <= 0.0:
+        c_crc = 1.0
+        eta_crc = 0.0
+    else:
+        c_crc = float(e_defer / e_all)
+        if c_crc <= 1.0 or r_c <= 0.0 or r_c >= 1.0:
+            eta_crc = 0.0
+        else:
+            eta_crc = max(0.0, min(1.0, math.log(c_crc) / math.log(1.0 / r_c)))
+    s_defer = max(0.0, min(1.0, float(r_u + eta_crc * ((1.0 - r_u) ** 2))))
+    return {
+        "tau_crc": float(crc_margin_cutoff(lambda_hat, temperature)),
+        "r_U": r_u,
+        "r_C": r_c,
+        "e_all": e_all,
+        "e_defer": e_defer,
+        "c_crc": float(c_crc),
+        "eta_crc": float(eta_crc),
+        "s_accept": float(1.0 - s_defer),
+        "s_defer": s_defer,
+    }
 
 
 def fixed_temperature_for_round(
@@ -109,31 +155,6 @@ def fixed_temperature_for_round(
     raise RuntimeError(
         "round_index > 0 requires a fixed temperature from --temperature or the previous round_summary.json"
     )
-
-
-def selected_count_for_stop(
-    *,
-    previous_selection_summary_path: Path,
-    previous_summary: dict[str, object],
-    train_rows: list[dict[str, object]],
-    previous_round_index: int,
-) -> int:
-    """读取上一轮 selection 的样本数，用于停止标准的成本项。"""
-    if previous_selection_summary_path.exists():
-        selection = read_json(previous_selection_summary_path).get("selection", {})
-    else:
-        selection = previous_summary.get("selection", {})
-    if isinstance(selection, dict) and selection:
-        return int(selection.get("selected_budget", 0) or 0)
-    count = 0
-    for row in train_rows:
-        try:
-            selection_round = int(row.get("selection_round", -1) or -1)
-        except (TypeError, ValueError):
-            continue
-        if selection_round == int(previous_round_index):
-            count += 1
-    return count
 
 
 def main() -> None:
@@ -183,10 +204,6 @@ def main() -> None:
         if args.previous_round_summary_path
         else output_dir / f"round_{args.round_index - 1}" / "round_summary.json"
     )
-    previous_selection_summary_path = input_artifact_path(
-        args.previous_selection_summary_path,
-        output_dir / f"round_{args.round_index - 1}" / "selection_summary.json",
-    )
     fixed_temperature, temperature_source = fixed_temperature_for_round(
         round_index=int(args.round_index),
         explicit_temperature=args.temperature,
@@ -230,7 +247,23 @@ def main() -> None:
         support_rows=calibration_predictions,
         crc_result=crc_result,
     )
+    calibration_decisions = apply_crc_decisions(
+        calibration_predictions,
+        lambda_hat=crc_result.lambda_hat,
+        temperature=temperature,
+        embeddings_by_id=embeddings_by_id,
+        support_rows=calibration_predictions,
+        crc_result=crc_result,
+        neighbor_exclude_self=True,
+    )
     summary = summarize_crc_decisions(pool_decisions)
+    guide_summary = summarize_crc_decisions(calibration_decisions)
+    sampling_stats = compute_crc_sampling_statistics(
+        calibration_decisions,
+        pool_decisions,
+        temperature=temperature,
+        lambda_hat=crc_result.lambda_hat,
+    )
     metrics = compute_binary_metrics(
         [binary_to_int(row["label"], field_name="pool prediction label") for row in pool_predictions],
         [float(row["score"]) for row in pool_predictions],
@@ -241,41 +274,23 @@ def main() -> None:
         "crc": crc_result.to_dict(),
         "temperature_choice": temperature_payload,
         "temperature": float(temperature),
+        "T": float(temperature),
+        "alpha": float(args.alpha),
         "lambda_hat": float(crc_result.lambda_hat),
         "pool_summary": summary,
+        "guide_summary": guide_summary,
+        "sampling_statistics": sampling_stats,
+        "tau_crc": float(sampling_stats["tau_crc"]),
+        "r_U": float(sampling_stats["r_U"]),
+        "r_C": float(sampling_stats["r_C"]),
+        "e_all": float(sampling_stats["e_all"]),
+        "e_defer": float(sampling_stats["e_defer"]),
+        "c_crc": float(sampling_stats["c_crc"]),
+        "eta_crc": float(sampling_stats["eta_crc"]),
+        "s_accept": float(sampling_stats["s_accept"]),
+        "s_defer": float(sampling_stats["s_defer"]),
         "pool_metrics": metrics,
     }
-    if args.round_index > 0 and previous_summary_path.exists():
-        previous_summary = read_json(previous_summary_path)
-        train_rows_path = input_artifact_path(args.train_rows_path, output_dir / "cgsd_train_rows.jsonl")
-        train_rows = read_jsonl(train_rows_path) if train_rows_path.exists() else []
-        previous_selected_count = selected_count_for_stop(
-            previous_selection_summary_path=previous_selection_summary_path,
-            previous_summary=previous_summary,
-            train_rows=train_rows,
-            previous_round_index=int(args.round_index) - 1,
-        )
-        total_selected_count = len(train_rows) if train_rows else previous_selected_count
-        budget_schedule = parse_int_csv(args.budget_schedule)
-        stop_decision = evaluate_stop_criteria(
-            previous_defer_rate=float(previous_summary["pool_summary"]["defer_rate"]),
-            current_defer_rate=float(summary["defer_rate"]),
-            round_selected_count=previous_selected_count,
-            total_selected_count=total_selected_count,
-            total_budget=int(args.total_budget),
-            completed_rounds=int(args.round_index),
-            max_rounds=len(budget_schedule) if budget_schedule else int(args.max_rounds),
-            pool_size=len(pool_predictions),
-            min_delta_defer_rate=float(args.min_delta_defer_rate),
-            use_economic_stop=not bool(args.no_economic_stop),
-        )
-        record["stop_after_round"] = bool(stop_decision.should_stop)
-        record["stop_decision"] = stop_decision.to_dict()
-        record["stop_reason"] = ",".join(stop_decision.reasons)
-        record["stop_decision_scope"] = (
-            "本轮训练后的预测和 CRC 校准完成后记录；"
-            "本 stage 只写出停止判断，不启动或停止其他 stage"
-        )
     write_jsonl(pool_decisions, pool_crc_predictions_path)
     write_json(record, round_summary_path)
     calibration_teacher_usage = summarize_teacher_label_usage(
