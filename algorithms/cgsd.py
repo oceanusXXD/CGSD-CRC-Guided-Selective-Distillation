@@ -39,10 +39,10 @@ class CRCResult:
     empirical_risk: float
     risk_bound: float
     grid_feasible: bool
-    neighbor_support_enabled: bool = False
+    neighbor_support_enabled: bool = True
     neighbor_support_reference: float | None = None
     query_reference_supports: dict[str, float] | None = None
-    threshold_function: str = "global_threshold"
+    threshold_function: str = "clip(lambda*(((b_q+eps)/(neighbor_support+eps))**gamma),0,1)"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -201,6 +201,88 @@ class AdaptiveSelection:
         }
 
 
+@dataclass(frozen=True)
+class NSDifficultyScoringResult:
+    """NS-difficulty 对 pool/guide 的打分结果。"""
+
+    pool_rows: list[dict[str, Any]]
+    guide_rows: list[dict[str, Any]]
+    epsilon: float
+    e_all: float
+    guide_low_support_count: int
+    pool_low_support_count: int
+    guide_mean_p_error: float
+    pool_mean_p_error: float
+    calibration_blocks: list[dict[str, float]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "score_source": "guide_neighbor_support_leave_one_out_isotonic",
+            "epsilon": float(self.epsilon),
+            "e_all": float(self.e_all),
+            "guide_count": len(self.guide_rows),
+            "pool_count": len(self.pool_rows),
+            "guide_low_support_count": int(self.guide_low_support_count),
+            "pool_low_support_count": int(self.pool_low_support_count),
+            "guide_mean_p_error": float(self.guide_mean_p_error),
+            "pool_mean_p_error": float(self.pool_mean_p_error),
+            "calibration_blocks": list(self.calibration_blocks),
+        }
+
+
+@dataclass(frozen=True)
+class NSDifficultySelection:
+    """按 NS-difficulty 全局错误率目标选出的蒸馏样本。"""
+
+    distillation_ids: list[str]
+    requested_budget: int
+    selected_budget: int
+    selection_method: str
+    pool_candidate_count: int
+    shortfall: bool
+    e_all: float
+    e_accept: float
+    e_defer: float
+    e_target: float
+    epsilon: float
+    beta: float
+    weight_floor: float
+    weight_cap: float
+    c_crc: float
+    pool_mean_p_error: float
+    selected_mean_p_error: float
+    selected_easy_count: int
+    selected_hard_count: int
+    target_unreachable: bool
+    weighting: str = "target_mean"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "distillation_ids": list(self.distillation_ids),
+            "requested_budget": int(self.requested_budget),
+            "selected_budget": int(self.selected_budget),
+            "selection_method": str(self.selection_method),
+            "pool_candidate_count": int(self.pool_candidate_count),
+            "shortfall": bool(self.shortfall),
+            "ns_score_source": "guide_neighbor_support_leave_one_out_isotonic",
+            "ns_e_all": float(self.e_all),
+            "ns_e_accept": float(self.e_accept),
+            "ns_e_defer": float(self.e_defer),
+            "ns_e_target": float(self.e_target),
+            "ns_epsilon": float(self.epsilon),
+            "ns_beta": float(self.beta),
+            "ns_weight_floor": float(self.weight_floor),
+            "ns_weight_cap": float(self.weight_cap),
+            "ns_c_crc": float(self.c_crc),
+            "ns_pool_mean_p_error": float(self.pool_mean_p_error),
+            "ns_selected_mean_p_error": float(self.selected_mean_p_error),
+            "ns_selected_easy_count": int(self.selected_easy_count),
+            "ns_selected_hard_count": int(self.selected_hard_count),
+            "ns_target_unreachable": bool(self.target_unreachable),
+            "ns_weighting": str(self.weighting),
+        }
+
+
 def _row_id(row: Mapping[str, Any]) -> str:
     value = row.get("id", row.get("sample_id", ""))
     return str(value)
@@ -340,6 +422,8 @@ def _attach_neighbor_support_scores(
     if not output or not bank_rows:
         for row in output:
             row["neighbor_support"] = 0.0
+            row["neighbor_support_total_weight"] = 0.0
+            row["neighbor_support_same_pred_count"] = 0
         return output
 
     bank_ids = [_row_id(row) for row in bank_rows]
@@ -367,14 +451,20 @@ def _attach_neighbor_support_scores(
         same_pred_indices = finite_indices[bank_preds[finite_indices] == pred]
         if same_pred_indices.size == 0:
             row["neighbor_support"] = 0.0
+            row["neighbor_support_total_weight"] = 0.0
+            row["neighbor_support_same_pred_count"] = 0
             continue
         weights = np.clip(similarities[same_pred_indices], a_min=0.0, a_max=None).astype(np.float64)
         total_weight = float(np.sum(weights))
         if total_weight <= 1e-12:
             row["neighbor_support"] = 0.0
+            row["neighbor_support_total_weight"] = 0.0
+            row["neighbor_support_same_pred_count"] = int(same_pred_indices.size)
             continue
         support_weight = float(np.sum(weights[bank_labels[same_pred_indices] == pred]))
         row["neighbor_support"] = float(max(0.0, min(1.0, support_weight / total_weight)))
+        row["neighbor_support_total_weight"] = total_weight
+        row["neighbor_support_same_pred_count"] = int(same_pred_indices.size)
     return output
 
 
@@ -480,9 +570,12 @@ def calibrate_crc(
     """在校准集上搜索最宽松且满足 wrong-accept 风险的 CRC 阈值。
 
     核心损失为 L_i(lambda)=1{R_i>=lambda}*1{prediction_i!=label_i}。
-    lambda 越小，accept 越多；因此按升序扫描网格，第一个可行 lambda
-    就是 defer 最少的合法阈值。
+    CRC 必须启用 neighbor support；没有真实 embedding 时直接报错，避免
+    静默退化成 global threshold。lambda 越小，accept 越多；因此按升序
+    扫描转折点，第一个可行 lambda 就是 defer 最少的合法阈值。
     """
+    if embeddings_by_id is None:
+        raise ValueError("CRC requires --embeddings_path; global no-embedding CRC is not allowed")
     rows = attach_routing_scores(calibration_rows, temperature=temperature)
     n = len(rows)
     if n == 0:
@@ -491,40 +584,34 @@ def calibrate_crc(
     if not (0.0 <= risk_target <= 1.0):
         raise ValueError("alpha must be within [0, 1]")
 
-    if embeddings_by_id is not None:
-        # 中间轮里 calibration_rows 就是 D_guide。这里只用 D_guide 估计
-        # 自适应 CRC 的 neighbor support，并排除样本自身 embedding。
-        # D_cert 不能进入此路径；它只能用于最终 CRC/评估层。
-        rows = _attach_neighbor_support_scores(
-            rows,
-            embeddings_by_id=embeddings_by_id,
-            support_rows=rows,
-            exclude_self=True,
-        )
-        reference_support = _neighbor_support_reference(rows)
-        query_refs = _query_reference_supports(
-            rows,
+    # 中间轮里 calibration_rows 就是 D_guide。这里只用 D_guide 估计
+    # 自适应 CRC 的 neighbor support，并排除样本自身 embedding。
+    # D_cert 不能进入此路径；它只能用于最终 CRC/评估层。
+    rows = _attach_neighbor_support_scores(
+        rows,
+        embeddings_by_id=embeddings_by_id,
+        support_rows=rows,
+        exclude_self=True,
+    )
+    reference_support = _neighbor_support_reference(rows)
+    query_refs = _query_reference_supports(
+        rows,
+        global_reference_support=reference_support,
+    )
+    for row in rows:
+        row["query_reference_support"] = _row_reference_support(
+            row,
             global_reference_support=reference_support,
+            query_reference_supports=query_refs,
         )
-        for row in rows:
-            row["query_reference_support"] = _row_reference_support(
-                row,
-                global_reference_support=reference_support,
-                query_reference_supports=query_refs,
-            )
-            row["lambda_transition"] = _lambda_transition(
-                float(row.get("routing_score", 0.0) or 0.0),
-                float(row.get("neighbor_support", 0.0) or 0.0),
-                float(row["query_reference_support"]),
-            )
+        row["lambda_transition"] = _lambda_transition(
+            float(row.get("routing_score", 0.0) or 0.0),
+            float(row.get("neighbor_support", 0.0) or 0.0),
+            float(row["query_reference_support"]),
+        )
 
-        lambda_values = sorted({0.0, 1.0, *[float(row["lambda_transition"]) for row in rows]})
-        threshold_function = "clip(lambda*(((b_q+eps)/(neighbor_support+eps))**gamma),0,1)"
-    else:
-        reference_support = None
-        query_refs = {}
-        lambda_values = sorted(float(value) for value in lambda_grid)
-        threshold_function = "global_threshold"
+    lambda_values = sorted({0.0, 1.0, *[float(row["lambda_transition"]) for row in rows]})
+    threshold_function = "clip(lambda*(((b_q+eps)/(neighbor_support+eps))**gamma),0,1)"
 
     best: CRCResult | None = None
     for lambda_value in lambda_values:
@@ -532,20 +619,17 @@ def calibrate_crc(
         # mean(1{accept and wrong})。分母固定为 n_calibration，
         # 这正是文档公式里的 (1/n) sum_j L_j(lambda)，不是
         # accept 条件下的错误率。
-        if embeddings_by_id is not None:
-            accepted = [
-                row
-                for row in rows
-                if float(row["routing_score"])
-                >= _adaptive_threshold(
-                    float(lambda_value),
-                    float(row.get("neighbor_support", 0.0) or 0.0),
-                    float(row.get("query_reference_support", reference_support or NEIGHBOR_SUPPORT_EPS) or NEIGHBOR_SUPPORT_EPS),
-                )
-                - 1e-12
-            ]
-        else:
-            accepted = [row for row in rows if float(row["routing_score"]) >= lambda_value]
+        accepted = [
+            row
+            for row in rows
+            if float(row["routing_score"])
+            >= _adaptive_threshold(
+                float(lambda_value),
+                float(row.get("neighbor_support", 0.0) or 0.0),
+                float(row.get("query_reference_support", reference_support or NEIGHBOR_SUPPORT_EPS) or NEIGHBOR_SUPPORT_EPS),
+            )
+            - 1e-12
+        ]
         wrong_accept_count = sum(1 for row in accepted if _row_prediction(row) != _row_label(row))
         empirical_risk = wrong_accept_count / float(n)
         bound = crc_risk_bound(empirical_risk, n)
@@ -560,7 +644,7 @@ def calibrate_crc(
                 empirical_risk=float(empirical_risk),
                 risk_bound=float(bound),
                 grid_feasible=True,
-                neighbor_support_enabled=embeddings_by_id is not None,
+                neighbor_support_enabled=True,
                 neighbor_support_reference=reference_support,
                 query_reference_supports=query_refs,
                 threshold_function=threshold_function,
@@ -582,7 +666,7 @@ def calibrate_crc(
         empirical_risk=0.0,
         risk_bound=crc_risk_bound(0.0, n),
         grid_feasible=False,
-        neighbor_support_enabled=embeddings_by_id is not None,
+        neighbor_support_enabled=True,
         neighbor_support_reference=reference_support,
         query_reference_supports=query_refs,
         threshold_function=threshold_function,
@@ -601,45 +685,49 @@ def apply_crc_decisions(
 ) -> list[dict[str, Any]]:
     """用固定 lambda 和 temperature 给样本打 accept/defer 决策。
 
-    这是部署阶段同样使用的唯一判定规则：
-    R_i >= lambda_hat 时 accept，否则 defer。
+    这是部署阶段同样使用的唯一判定规则。CRC 决策必须带
+    neighbor-support embedding、guide 支持库和 NS-CRC 校准摘要；缺任意
+    一个都直接失败，避免旧 global threshold 路径混入实验。
     """
+    if embeddings_by_id is None:
+        raise ValueError("CRC decisions require --embeddings_path; global no-embedding CRC is not allowed")
+    if support_rows is None:
+        raise ValueError("CRC decisions require support_rows from D_guide")
+    if crc_result is None:
+        raise ValueError("CRC decisions require the CRCResult/round_summary crc payload")
     routed = attach_routing_scores(prediction_rows, temperature=temperature)
     threshold = float(lambda_hat)
     force_all_defer = threshold > 1.0
-    neighbor_enabled = bool(
-        embeddings_by_id is not None
-        and support_rows is not None
-        and crc_result is not None
-        and (
-            bool(getattr(crc_result, "neighbor_support_enabled", False))
-            if isinstance(crc_result, CRCResult)
-            else bool(crc_result.get("neighbor_support_enabled", False))
-        )
+    neighbor_enabled = (
+        bool(getattr(crc_result, "neighbor_support_enabled", False))
+        if isinstance(crc_result, CRCResult)
+        else bool(crc_result.get("neighbor_support_enabled", False))
     )
-    if neighbor_enabled:
-        support_routed = attach_routing_scores(support_rows or [], temperature=temperature)
-        # 中间轮决策时，调用方传入的 support_rows 是 D_guide。
-        # D_cert 仍然隔离给最终 CRC/评估使用，不能作为这里的邻居库。
-        routed = _attach_neighbor_support_scores(
-            routed,
-            embeddings_by_id=embeddings_by_id or {},
-            support_rows=support_routed,
-            exclude_self=bool(neighbor_exclude_self),
-        )
-        if isinstance(crc_result, CRCResult):
-            reference_support = float(crc_result.neighbor_support_reference or NEIGHBOR_SUPPORT_EPS)
-            query_refs = dict(crc_result.query_reference_supports or {})
-        else:
-            reference_support = float(crc_result.get("neighbor_support_reference", NEIGHBOR_SUPPORT_EPS) or NEIGHBOR_SUPPORT_EPS)
-            query_refs = dict(crc_result.get("query_reference_supports", {}) or {})
+    if not neighbor_enabled:
+        raise ValueError("CRC decisions require a neighbor-support CRC result; rerun calibration with embeddings")
+
+    support_routed = attach_routing_scores(support_rows or [], temperature=temperature)
+    # 中间轮决策时，调用方传入的 support_rows 是 D_guide。
+    # D_cert 仍然隔离给最终 CRC/评估使用，不能作为这里的邻居库。
+    routed = _attach_neighbor_support_scores(
+        routed,
+        embeddings_by_id=embeddings_by_id,
+        support_rows=support_routed,
+        exclude_self=bool(neighbor_exclude_self),
+    )
+    if isinstance(crc_result, CRCResult):
+        reference_support = float(crc_result.neighbor_support_reference or NEIGHBOR_SUPPORT_EPS)
+        query_refs = dict(crc_result.query_reference_supports or {})
+    else:
+        reference_support = float(crc_result.get("neighbor_support_reference", NEIGHBOR_SUPPORT_EPS) or NEIGHBOR_SUPPORT_EPS)
+        query_refs = dict(crc_result.get("query_reference_supports", {}) or {})
     decided: list[dict[str, Any]] = []
     for row in routed:
         item = dict(row)
         if force_all_defer:
             decision_threshold = threshold
             decision = "defer"
-        elif neighbor_enabled:
+        else:
             reference = _row_reference_support(
                 item,
                 global_reference_support=reference_support,
@@ -650,9 +738,6 @@ def apply_crc_decisions(
                 float(item.get("neighbor_support", 0.0) or 0.0),
                 reference,
             )
-            decision = "accept" if float(item["routing_score"]) >= float(decision_threshold) - 1e-12 else "defer"
-        else:
-            decision_threshold = threshold
             decision = "accept" if float(item["routing_score"]) >= float(decision_threshold) - 1e-12 else "defer"
         item["crc_decision"] = decision
         item["defer"] = decision == "defer"
@@ -797,6 +882,472 @@ def compute_adaptive_sampling_plan(
     )
 
 
+def _ns_local_accuracy(row: Mapping[str, Any], *, e_all: float) -> tuple[float, bool]:
+    """把 neighbor-support 转成局部正确率，低支持时回退到 guide 全局正确率。"""
+    total_weight = float(row.get("neighbor_support_total_weight", 0.0) or 0.0)
+    if total_weight <= 1e-12:
+        return float(max(0.0, min(1.0, 1.0 - float(e_all)))), True
+    return _clip_unit(row.get("neighbor_support", 0.0)), False
+
+
+def _fit_isotonic_blocks(
+    scores: Sequence[float],
+    labels: Sequence[float],
+    *,
+    epsilon: float,
+) -> list[dict[str, float]]:
+    """用 PAV 单调校准估计 P(error | NS difficulty)。"""
+    if len(scores) != len(labels):
+        raise ValueError("isotonic scores and labels must have the same length")
+    if not scores:
+        raise ValueError("isotonic calibration requires at least one guide row")
+    score_array = np.asarray(scores, dtype=np.float64)
+    label_array = np.asarray(labels, dtype=np.float64)
+    order = np.argsort(score_array, kind="mergesort")
+    blocks: list[dict[str, float]] = []
+    for index in order:
+        value = float(score_array[int(index)])
+        block = {
+            "min_score": value,
+            "max_score": value,
+            "error_sum": float(label_array[int(index)]),
+            "count": 1.0,
+        }
+        blocks.append(block)
+        while len(blocks) >= 2:
+            left = blocks[-2]
+            right = blocks[-1]
+            left_mean = left["error_sum"] / left["count"]
+            right_mean = right["error_sum"] / right["count"]
+            if left_mean <= right_mean + 1e-12:
+                break
+            merged = {
+                "min_score": left["min_score"],
+                "max_score": right["max_score"],
+                "error_sum": left["error_sum"] + right["error_sum"],
+                "count": left["count"] + right["count"],
+            }
+            blocks[-2:] = [merged]
+
+    eps = float(max(0.0, min(0.5, epsilon)))
+    calibrated: list[dict[str, float]] = []
+    for block in blocks:
+        p_error = block["error_sum"] / block["count"]
+        calibrated.append(
+            {
+                "min_score": float(block["min_score"]),
+                "max_score": float(block["max_score"]),
+                "p_error": float(max(eps, min(1.0 - eps, p_error))),
+                "count": float(block["count"]),
+            }
+        )
+    return calibrated
+
+
+def _predict_isotonic(blocks: Sequence[Mapping[str, float]], score: float) -> float:
+    if not blocks:
+        raise ValueError("isotonic predictor requires fitted blocks")
+    thresholds = np.asarray([float(block["max_score"]) for block in blocks], dtype=np.float64)
+    values = np.asarray([float(block["p_error"]) for block in blocks], dtype=np.float64)
+    index = int(np.searchsorted(thresholds, float(score), side="left"))
+    index = max(0, min(index, len(values) - 1))
+    return float(values[index])
+
+
+def score_ns_difficulty_global(
+    pool_rows: Sequence[Mapping[str, Any]],
+    guide_rows: Sequence[Mapping[str, Any]],
+    *,
+    embeddings_by_id: Mapping[str, np.ndarray] | None,
+    e_all: float,
+) -> NSDifficultyScoringResult:
+    """给 pool 样本计算 NS-difficulty 全局打分。
+
+    guide 全集作为支持库；guide 自身校准时用 leave-one-out，避免样本用
+    自己的标签解释自己。低支持样本没有可用同预测邻居时，难度回退到
+    guide 全局错误率 `e_all`，不引入额外平滑超参。
+    """
+    if embeddings_by_id is None:
+        raise ValueError("ns-difficulty requires --embeddings_path; no-embedding fallback is not allowed")
+    if not guide_rows:
+        raise ValueError("ns-difficulty requires non-empty guide_rows")
+    baseline_error = float(e_all)
+    if not math.isfinite(baseline_error) or baseline_error < 0.0 or baseline_error > 1.0:
+        raise ValueError("e_all must be a finite value in [0, 1]")
+
+    epsilon = float(1.0 / (len(guide_rows) + 1.0))
+    guide_scored = _attach_neighbor_support_scores(
+        guide_rows,
+        embeddings_by_id=embeddings_by_id,
+        support_rows=guide_rows,
+        exclude_self=True,
+    )
+    guide_difficulties: list[float] = []
+    guide_wrong: list[float] = []
+    guide_low_support_count = 0
+    for row in guide_scored:
+        local_accuracy, low_support = _ns_local_accuracy(row, e_all=baseline_error)
+        difficulty = float(max(0.0, min(1.0, 1.0 - local_accuracy)))
+        row["ns_local_accuracy"] = local_accuracy
+        row["ns_difficulty"] = difficulty
+        row["ns_low_support"] = bool(low_support)
+        row["ns_epsilon"] = epsilon
+        guide_difficulties.append(difficulty)
+        guide_wrong.append(float(_row_prediction(row) != _row_label(row)))
+        guide_low_support_count += int(low_support)
+
+    blocks = _fit_isotonic_blocks(guide_difficulties, guide_wrong, epsilon=epsilon)
+    guide_p_errors: list[float] = []
+    for row in guide_scored:
+        p_error = _predict_isotonic(blocks, float(row["ns_difficulty"]))
+        row["ns_p_error"] = p_error
+        guide_p_errors.append(p_error)
+
+    pool_scored = _attach_neighbor_support_scores(
+        pool_rows,
+        embeddings_by_id=embeddings_by_id,
+        support_rows=guide_rows,
+        exclude_self=False,
+    )
+    pool_p_errors: list[float] = []
+    pool_low_support_count = 0
+    for row in pool_scored:
+        row["id"] = _row_id(row)
+        row["prediction"] = _row_prediction(row)
+        local_accuracy, low_support = _ns_local_accuracy(row, e_all=baseline_error)
+        difficulty = float(max(0.0, min(1.0, 1.0 - local_accuracy)))
+        p_error = _predict_isotonic(blocks, difficulty)
+        row["ns_local_accuracy"] = local_accuracy
+        row["ns_difficulty"] = difficulty
+        row["ns_p_error"] = p_error
+        row["ns_low_support"] = bool(low_support)
+        row["ns_epsilon"] = epsilon
+        pool_p_errors.append(p_error)
+        pool_low_support_count += int(low_support)
+
+    return NSDifficultyScoringResult(
+        pool_rows=pool_scored,
+        guide_rows=guide_scored,
+        epsilon=epsilon,
+        e_all=baseline_error,
+        guide_low_support_count=guide_low_support_count,
+        pool_low_support_count=pool_low_support_count,
+        guide_mean_p_error=float(np.mean(np.asarray(guide_p_errors, dtype=np.float64))),
+        pool_mean_p_error=float(np.mean(np.asarray(pool_p_errors, dtype=np.float64))) if pool_p_errors else 0.0,
+        calibration_blocks=blocks,
+    )
+
+
+def _ns_e_accept_from_plan(sampling_plan: AdaptiveSamplingPlan) -> float:
+    denominator = float(1.0 - sampling_plan.r_C)
+    if denominator <= 1e-12:
+        return 0.0
+    value = (float(sampling_plan.e_all) - float(sampling_plan.r_C) * float(sampling_plan.e_defer)) / denominator
+    return float(max(0.0, min(1.0, value)))
+
+
+def _ns_weights_for_beta(
+    p_errors: np.ndarray,
+    *,
+    beta: float,
+    e_all: float,
+    epsilon: float,
+    weight_floor: float,
+    weight_cap: float,
+) -> np.ndarray:
+    denominator = max(float(epsilon), float(e_all) + float(epsilon))
+    base = np.maximum(float(epsilon), p_errors + float(epsilon)) / denominator
+    raw = np.exp(np.clip(np.log(base) * float(beta), -50.0, 50.0))
+    return np.clip(raw, a_min=float(weight_floor), a_max=float(weight_cap)).astype(np.float64)
+
+
+def _weighted_mean(values: np.ndarray, weights: np.ndarray) -> float:
+    total = float(np.sum(weights))
+    if total <= 0.0:
+        return float(np.mean(values)) if values.size else 0.0
+    return float(np.sum(values * weights) / total)
+
+
+def select_ns_difficulty_global_samples(
+    scored_pool_rows: Sequence[Mapping[str, Any]],
+    *,
+    sampling_plan: AdaptiveSamplingPlan,
+    budget: int,
+    seed: int,
+    blocked_ids: Iterable[str] = (),
+) -> NSDifficultySelection:
+    """按 CRC 派生目标错误率从全 pool 做 NS-difficulty PPS 采样。
+
+    输入行必须先经过 `score_ns_difficulty_global`。本函数只使用前面 CRC
+    已经推出的 `e_all/e_defer/c_crc/s_accept/s_defer`，不暴露新的比例超参。
+    """
+    requested_budget = int(max(0, budget))
+    blocked = {str(sample_id) for sample_id in blocked_ids}
+    candidates: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for row in scored_pool_rows:
+        sample_id = _row_id(row)
+        if sample_id in blocked or sample_id in seen:
+            continue
+        if "ns_p_error" not in row:
+            raise ValueError("select_ns_difficulty_global_samples requires rows scored by score_ns_difficulty_global")
+        candidates.append(row)
+        seen.add(sample_id)
+
+    if requested_budget == 0 or not candidates:
+        return NSDifficultySelection(
+            distillation_ids=[],
+            requested_budget=requested_budget,
+            selected_budget=0,
+            selection_method="ns-difficulty-global",
+            pool_candidate_count=len(candidates),
+            shortfall=requested_budget > 0,
+            e_all=float(sampling_plan.e_all),
+            e_accept=_ns_e_accept_from_plan(sampling_plan),
+            e_defer=float(sampling_plan.e_defer),
+            e_target=0.0,
+            epsilon=0.0,
+            beta=0.0,
+            weight_floor=1.0,
+            weight_cap=1.0,
+            c_crc=float(sampling_plan.c_crc),
+            pool_mean_p_error=0.0,
+            selected_mean_p_error=0.0,
+            selected_easy_count=0,
+            selected_hard_count=0,
+            target_unreachable=False,
+        )
+
+    p_errors = np.asarray([float(row["ns_p_error"]) for row in candidates], dtype=np.float64)
+    if not np.all(np.isfinite(p_errors)):
+        raise ValueError("ns_p_error contains non-finite values")
+    epsilon = float(candidates[0].get("ns_epsilon", 1.0 / (sampling_plan.calibration_count + 1.0)) or 0.0)
+    epsilon = float(max(0.0, min(0.5, epsilon)))
+    e_accept = _ns_e_accept_from_plan(sampling_plan)
+    e_defer = float(max(0.0, min(1.0, sampling_plan.e_defer)))
+    e_target = float(max(0.0, min(1.0, sampling_plan.s_accept * e_accept + sampling_plan.s_defer * e_defer)))
+    pool_mean = float(np.mean(p_errors))
+    c_crc = float(sampling_plan.c_crc)
+    if c_crc > 1.0:
+        weight_floor = float(1.0 / c_crc)
+        weight_cap = float(c_crc)
+    else:
+        weight_floor = 1.0
+        weight_cap = 1.0
+
+    target_unreachable = False
+    if c_crc <= 1.0 or e_target <= pool_mean + 1e-12:
+        beta = 0.0
+        weights = np.ones_like(p_errors, dtype=np.float64)
+    else:
+        low = 0.0
+        high = 1.0
+        weights_high = _ns_weights_for_beta(
+            p_errors,
+            beta=high,
+            e_all=float(sampling_plan.e_all),
+            epsilon=epsilon,
+            weight_floor=weight_floor,
+            weight_cap=weight_cap,
+        )
+        while _weighted_mean(p_errors, weights_high) < e_target and high < 64.0:
+            high *= 2.0
+            weights_high = _ns_weights_for_beta(
+                p_errors,
+                beta=high,
+                e_all=float(sampling_plan.e_all),
+                epsilon=epsilon,
+                weight_floor=weight_floor,
+                weight_cap=weight_cap,
+            )
+        if _weighted_mean(p_errors, weights_high) < e_target:
+            beta = high
+            weights = weights_high
+            target_unreachable = True
+        else:
+            for _ in range(60):
+                mid = (low + high) / 2.0
+                weights_mid = _ns_weights_for_beta(
+                    p_errors,
+                    beta=mid,
+                    e_all=float(sampling_plan.e_all),
+                    epsilon=epsilon,
+                    weight_floor=weight_floor,
+                    weight_cap=weight_cap,
+                )
+                if _weighted_mean(p_errors, weights_mid) < e_target:
+                    low = mid
+                else:
+                    high = mid
+            beta = high
+            weights = _ns_weights_for_beta(
+                p_errors,
+                beta=beta,
+                e_all=float(sampling_plan.e_all),
+                epsilon=epsilon,
+                weight_floor=weight_floor,
+                weight_cap=weight_cap,
+            )
+
+    total_weight = float(np.sum(weights))
+    if total_weight <= 0.0:
+        weights = np.ones_like(p_errors, dtype=np.float64)
+        total_weight = float(np.sum(weights))
+    probabilities = weights / total_weight
+    for row, weight, probability in zip(candidates, weights, probabilities, strict=True):
+        if isinstance(row, dict):
+            row["ns_sampling_weight"] = float(weight)
+            row["ns_selection_probability"] = float(probability)
+
+    selected_count = min(requested_budget, len(candidates))
+    rng = np.random.default_rng(int(seed))
+    if selected_count >= len(candidates):
+        selected_indices = np.arange(len(candidates))
+    else:
+        selected_indices = rng.choice(len(candidates), size=selected_count, replace=False, p=probabilities)
+    selected_ids = [_row_id(candidates[int(index)]) for index in selected_indices]
+    selected_p = p_errors[selected_indices] if selected_count else np.asarray([], dtype=np.float64)
+    median_p = float(np.median(p_errors))
+    selected_hard_count = int(np.sum(selected_p > median_p))
+    selected_easy_count = int(selected_count - selected_hard_count)
+
+    return NSDifficultySelection(
+        distillation_ids=selected_ids,
+        requested_budget=requested_budget,
+        selected_budget=len(selected_ids),
+        selection_method="ns-difficulty-global",
+        pool_candidate_count=len(candidates),
+        shortfall=len(selected_ids) < requested_budget,
+        e_all=float(sampling_plan.e_all),
+        e_accept=e_accept,
+        e_defer=e_defer,
+        e_target=e_target,
+        epsilon=epsilon,
+        beta=float(beta),
+        weight_floor=weight_floor,
+        weight_cap=weight_cap,
+        c_crc=c_crc,
+        pool_mean_p_error=pool_mean,
+        selected_mean_p_error=float(np.mean(selected_p)) if selected_p.size else 0.0,
+        selected_easy_count=selected_easy_count,
+        selected_hard_count=selected_hard_count,
+        target_unreachable=target_unreachable,
+    )
+
+
+def select_ns_error_mass_samples(
+    scored_pool_rows: Sequence[Mapping[str, Any]],
+    *,
+    sampling_plan: AdaptiveSamplingPlan,
+    budget: int,
+    seed: int,
+    blocked_ids: Iterable[str] = (),
+) -> NSDifficultySelection:
+    """按 NS 预计错误质量做无放回 PPS 采样。
+
+    CRC 只负责外层 accept/defer 预算；本函数在传入候选集合内部使用
+    ``P(i) ∝ ns_p_error_i``。这样不会因为目标均值低于候选池均值而退化成
+    均匀采样。
+    """
+    requested_budget = int(max(0, budget))
+    blocked = {str(sample_id) for sample_id in blocked_ids}
+    candidates: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for row in scored_pool_rows:
+        sample_id = _row_id(row)
+        if sample_id in blocked or sample_id in seen:
+            continue
+        if "ns_p_error" not in row:
+            raise ValueError("select_ns_error_mass_samples requires rows scored by score_ns_difficulty_global")
+        candidates.append(row)
+        seen.add(sample_id)
+
+    if requested_budget == 0 or not candidates:
+        return NSDifficultySelection(
+            distillation_ids=[],
+            requested_budget=requested_budget,
+            selected_budget=0,
+            selection_method="ns-error-mass",
+            pool_candidate_count=len(candidates),
+            shortfall=requested_budget > 0,
+            e_all=float(sampling_plan.e_all),
+            e_accept=_ns_e_accept_from_plan(sampling_plan),
+            e_defer=float(sampling_plan.e_defer),
+            e_target=0.0,
+            epsilon=0.0,
+            beta=1.0,
+            weight_floor=0.0,
+            weight_cap=0.0,
+            c_crc=float(sampling_plan.c_crc),
+            pool_mean_p_error=0.0,
+            selected_mean_p_error=0.0,
+            selected_easy_count=0,
+            selected_hard_count=0,
+            target_unreachable=False,
+            weighting="ns-error-mass",
+        )
+
+    p_errors = np.asarray([float(row["ns_p_error"]) for row in candidates], dtype=np.float64)
+    if not np.all(np.isfinite(p_errors)):
+        raise ValueError("ns_p_error contains non-finite values")
+    if np.any(p_errors < 0.0):
+        raise ValueError("ns_p_error contains negative values")
+
+    epsilon = float(candidates[0].get("ns_epsilon", 1.0 / (sampling_plan.calibration_count + 1.0)) or 0.0)
+    epsilon = float(max(0.0, min(0.5, epsilon)))
+    e_accept = _ns_e_accept_from_plan(sampling_plan)
+    e_defer = float(max(0.0, min(1.0, sampling_plan.e_defer)))
+    e_target = float(max(0.0, min(1.0, sampling_plan.s_accept * e_accept + sampling_plan.s_defer * e_defer)))
+    pool_mean = float(np.mean(p_errors))
+
+    weights = p_errors.astype(np.float64, copy=True)
+    total_weight = float(np.sum(weights))
+    if total_weight <= 0.0:
+        weights = np.ones_like(p_errors, dtype=np.float64)
+        total_weight = float(np.sum(weights))
+    probabilities = weights / total_weight
+    for row, weight, probability in zip(candidates, weights, probabilities, strict=True):
+        if isinstance(row, dict):
+            row["ns_sampling_weight"] = float(weight)
+            row["ns_selection_probability"] = float(probability)
+
+    selected_count = min(requested_budget, len(candidates))
+    rng = np.random.default_rng(int(seed))
+    if selected_count >= len(candidates):
+        selected_indices = np.arange(len(candidates))
+    else:
+        selected_indices = rng.choice(len(candidates), size=selected_count, replace=False, p=probabilities)
+    selected_ids = [_row_id(candidates[int(index)]) for index in selected_indices]
+    selected_p = p_errors[selected_indices] if selected_count else np.asarray([], dtype=np.float64)
+    median_p = float(np.median(p_errors))
+    selected_hard_count = int(np.sum(selected_p > median_p))
+    selected_easy_count = int(selected_count - selected_hard_count)
+
+    return NSDifficultySelection(
+        distillation_ids=selected_ids,
+        requested_budget=requested_budget,
+        selected_budget=len(selected_ids),
+        selection_method="ns-error-mass",
+        pool_candidate_count=len(candidates),
+        shortfall=len(selected_ids) < requested_budget,
+        e_all=float(sampling_plan.e_all),
+        e_accept=e_accept,
+        e_defer=e_defer,
+        e_target=e_target,
+        epsilon=epsilon,
+        beta=1.0,
+        weight_floor=float(np.min(weights)) if weights.size else 0.0,
+        weight_cap=float(np.max(weights)) if weights.size else 0.0,
+        c_crc=float(sampling_plan.c_crc),
+        pool_mean_p_error=pool_mean,
+        selected_mean_p_error=float(np.mean(selected_p)) if selected_p.size else 0.0,
+        selected_easy_count=selected_easy_count,
+        selected_hard_count=selected_hard_count,
+        target_unreachable=False,
+        weighting="ns-error-mass",
+    )
+
+
 def choose_temperature(
     calibration_rows: Sequence[Mapping[str, Any]],
     pool_rows: Sequence[Mapping[str, Any]],
@@ -816,6 +1367,8 @@ def choose_temperature(
     2. CRC 风险上界更低；
     3. 温度更小，保证完全确定性。
     """
+    if embeddings_by_id is None:
+        raise ValueError("temperature selection requires --embeddings_path because all CRC uses neighbor-support")
     candidates: list[dict[str, Any]] = []
     best_key: tuple[float, float, float] | None = None
     best_choice: TemperatureChoice | None = None
@@ -1430,6 +1983,8 @@ __all__ = [
     "DeferSelection",
     "DEFAULT_LAMBDA_GRID",
     "DEFAULT_TEMPERATURE_GRID",
+    "NSDifficultyScoringResult",
+    "NSDifficultySelection",
     "TemperatureChoice",
     "apply_crc_decisions",
     "attach_routing_scores",
@@ -1440,9 +1995,12 @@ __all__ = [
     "crc_margin_cutoff",
     "crc_risk_bound",
     "k_center_greedy",
+    "score_ns_difficulty_global",
     "select_adaptive_distillation_samples",
     "select_defer_k_center_samples",
     "select_documented_training_samples",
+    "select_ns_difficulty_global_samples",
+    "select_ns_error_mass_samples",
     "sigmoid_abs_margin",
     "split_calibration_pool_ids",
     "summarize_crc_decisions",

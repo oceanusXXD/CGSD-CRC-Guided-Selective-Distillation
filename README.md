@@ -96,7 +96,7 @@ python scripts/cgsd_prepare.py \
   --embeddings_path experiments/inputs/fever/embeddings.npy \
   --output_dir experiments/runs/fever/example_run \
   --embedding_dim 2560 \
-  --n_calibration 200 \
+  --n_calibration 1000 \
   --n_final_calibration 200 \
   --seed 1
 ```
@@ -253,9 +253,10 @@ FEVER 文档版 5 方法 × 3 seed 的 500 样本集可直接生成：
 ```bash
 python scripts/cgsd_make_fever_documented_sampling_sets.py \
   --seeds 1,2,3 \
+  --methods pool-random,pure-accept,pure-defer,fixed-15-85,crc-error-mass \
   --train_size 500 \
   --test_size 10000 \
-  --guide_size 500 \
+  --guide_size 1000 \
   --temperature 15 \
   --alpha 0.1
 ```
@@ -263,6 +264,24 @@ python scripts/cgsd_make_fever_documented_sampling_sets.py \
 默认输出到 `experiments/inputs/fever/documented_sampling_500_seeds1_2_3_t15_alpha010/`。
 每个 seed 下都会生成 `pool-random`、`pure-accept`、`pure-defer`、
 `fixed-15-85`、`crc-error-mass` 五个训练集。
+`--methods` 可只生成部分方法，方法名里的 `-` 和 `_` 等价。
+
+NS difficulty / NS error-mass 数据集可用：
+
+```bash
+python scripts/cgsd_make_fever_ns_difficulty_sets.py \
+  --seeds 1,2 \
+  --methods random,crc-error-mass,ns-difficulty-global,ns-error-mass \
+  --train_size 3000 \
+  --temperature 1 \
+  --alpha 0.1
+```
+
+- `ns-difficulty-global`：在全 pool 上用 guide-neighbor-support 校准出的
+  `ns_p_error` 做目标均值 PPS 消融。
+- `ns-error-mass`：先沿用 CRC error-mass 的
+  `B_accept/B_defer`，再分别在 accept/defer 子集内部做
+  `P(i) ∝ ns_p_error_i` 的无放回 PPS。它不使用 top-k、bucket 或手写难度比例。
 
 ## 训练
 

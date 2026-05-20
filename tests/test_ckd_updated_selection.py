@@ -12,6 +12,7 @@ from algorithms.cgsd import (
     select_documented_training_samples,
 )
 from scripts.cgsd_calibrate import compute_crc_sampling_statistics
+from scripts.cgsd_make_fever_ns_difficulty_sets import select_ns_error_mass_split
 
 
 class CKDUpdatedSelectionTest(unittest.TestCase):
@@ -297,6 +298,43 @@ class CKDUpdatedSelectionTest(unittest.TestCase):
         self.assertEqual(["a1"], selection.accept_ids)
         self.assertEqual(3, len(selection.defer_ids))
         self.assertEqual(4, selection.selected_budget)
+
+    def test_ns_crc_split_weights_each_side_by_ns_error_mass(self) -> None:
+        rows = [
+            {"id": "a_low", "defer": False, "prediction": 1, "label": 1, "ns_p_error": 0.01, "ns_epsilon": 0.001},
+            {"id": "a_mid", "defer": False, "prediction": 1, "label": 1, "ns_p_error": 0.20, "ns_epsilon": 0.001},
+            {"id": "a_high", "defer": False, "prediction": 1, "label": 1, "ns_p_error": 0.80, "ns_epsilon": 0.001},
+        ]
+        plan = AdaptiveSamplingPlan(
+            temperature=1.0,
+            alpha=0.1,
+            lambda_hat=0.75,
+            tau_crc=0.0,
+            budget=2,
+            r_U=0.0,
+            r_C=0.1,
+            e_all=0.1,
+            e_defer=0.2,
+            c_crc=2.0,
+            eta_crc=1.0,
+            s_accept=1.0,
+            s_defer=0.0,
+            B_accept=2,
+            B_defer=0,
+            pool_accept_count=3,
+            pool_defer_count=0,
+            calibration_count=1000,
+            calibration_defer_count=100,
+            calibration_error_count=100,
+            calibration_defer_error_count=20,
+        )
+
+        _, payload = select_ns_error_mass_split(rows, plan=plan, train_size=2, seed=3)
+
+        weights = {row["id"]: row["ns_sampling_weight"] for row in rows}
+        self.assertGreater(weights["a_high"], weights["a_mid"])
+        self.assertGreater(weights["a_mid"], weights["a_low"])
+        self.assertEqual("ns-error-mass", payload["accept_ns_selection"]["ns_weighting"])
 
     def test_calibration_statistics_do_not_expose_budget_fields(self) -> None:
         calibration_decisions = [

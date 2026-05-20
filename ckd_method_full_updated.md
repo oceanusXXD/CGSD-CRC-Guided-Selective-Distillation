@@ -14,11 +14,11 @@
 
 我们手上有 N 个未标注的文档（比如 FEVER 的 16.5 万条）。在做任何事情之前，先随机地从中抽出两小批文档：
 
-- **引导集**（$\mathcal{D}_{\text{guide}}$）：100 个文档。这一批数据的作用是在训练过程中帮助我们判断"小模型在哪些文档上不靠谱"。我们把这 100 个文档发给大模型，获取它们的正确标签（yes/no），并永久保存。
+- **引导集**（$\mathcal{D}_{\text{guide}}$）：1000 个文档。这一批数据的作用是在训练过程中帮助我们判断"小模型在哪些文档上不靠谱"。我们把这 1000 个文档发给大模型，获取它们的正确标签（yes/no），并永久保存。
 
 - **认证集**（$\mathcal{D}_{\text{cert}}$）：200 个文档。这一批数据的作用是在最后提供精度保证。同样发给大模型获取正确标签。**但关键区别是：认证集在整个训练过程中完全不参与任何决策——它被锁起来，直到最后一步才打开。** 这个隔离是精度保证成立的关键条件。
 
-- **候选池**（$\mathcal{U}_{\text{pool}}$）：剩下的 N - 300 个文档。这是我们后续要从中选择训练数据的池子，也是最终部署时小模型需要处理的数据。
+- **候选池**（$\mathcal{U}_{\text{pool}}$）：剩下的 N - 1200 个文档。这是我们后续要从中选择训练数据的池子，也是最终部署时小模型需要处理的数据。
 
 ### 第二步：计算所有文档的 embedding
 
@@ -295,7 +295,187 @@ k-Center Greedy 的过程是：
 
 **accept 部分**：accept 集提供 easy / anchor samples，防止训练集过度偏向 hard cases。accept 样本可以从 accept 集中随机选择 $B_{\text{accept}}$ 个，也可以优先选择路由分数较高的 high-confidence accept 样本。
 
-因此，本轮训练候选集为：
+#### 消融策略：NS-difficulty global 选样
+
+上面的主流程先用 CRC 把候选池分成 accept/defer，再按
+$B_{\text{accept}}$ 和 $B_{\text{defer}}$ 分别选样。为了验证
+neighbor support 本身是否能独立提供有效的难度信号，可以加入一个
+**NS-difficulty global** 消融：不先划分 accept/defer，而是在整个
+$\mathcal{U}_{\text{pool}}$ 上按局部难度分数直接选择 $B_t$ 个样本。
+
+这个消融的关键点是：难度分数的采样比例不能手写成固定的
+"easy 20%、middle 60%、hard 20%"。分数分布会随模型、数据集和温度 T
+变化，固定分位数会引入新的不可解释超参数。因此 global 难度选样应
+使用前面 CRC 已经估计出的错误浓缩量来自动决定"应该偏向难样本到什么
+程度"。
+
+首先，对任意候选样本 $x_i$，用全部引导集作为支持库。设 $z_i$ 是样本
+embedding，$z_j$ 是引导集样本 embedding，相似度权重为：
+
+$$
+w_{ij}
+=
+\max\{\cos(z_i,z_j),0\}
+$$
+
+为了让局部准确率对应到当前 student 的预测方向，只使用与 $x_i$ 预测
+相同的 guide 邻居：
+
+$$
+\mathcal{N}_i
+=
+\{j\in \mathcal{D}_{\text{guide}}:\hat{y}_j=\hat{y}_i\}
+$$
+
+于是 $x_i$ 的 guide 局部准确率定义为：
+
+$$
+a_i
+=
+\frac{
+\sum_{j\in\mathcal{N}_i}w_{ij}\mathbf{1}\{\hat{y}_j=y_j\}
+}{
+\sum_{j\in\mathcal{N}_i}w_{ij}
+}
+$$
+
+若分母为 0，则不强行相信这个样本很难或很简单，而是直接令它的局部难度
+回退到整体错误率 $e_{\text{all}}$；等价地，局部准确率回退到
+$1-e_{\text{all}}$。实际实现中可以记录为低支持样本，并在采样权重中只
+给它平均难度。局部难度为：
+
+$$
+d_i=1-a_i
+$$
+
+但 $d_i$ 只是一个相似邻域错误率的原始估计。为了避免 embedding 相似度
+未校准导致过度相信某些极端分数，需要在 guide 上做一次 leave-one-out
+校准。对每个 guide 样本 $g_j$，用其他 guide 样本计算 $d_j^{(-j)}$，
+并记真实错误标签：
+
+$$
+u_j=\mathbf{1}\{\hat{y}_j\ne y_j\}
+$$
+
+然后用单调校准把 $d_j^{(-j)}$ 映射成局部错误概率：
+
+$$
+\hat{p}_{\text{err}}(d)
+\approx
+\Pr(\hat{y}\ne y\mid d)
+$$
+
+这里推荐使用 isotonic / PAV 单调回归，因为它不需要预设 bucket 个数，
+只利用"难度越高，错误概率不应越低"这个顺序假设。这样每个 pool 样本
+都得到一个校准后的难度概率：
+
+$$
+p_i=\hat{p}_{\text{err}}(d_i)
+$$
+
+接下来用 CRC 诊断量自动确定本轮训练集的目标错误密度。先由
+$e_{\text{all}}$、$r_C$ 和 $e_{\text{defer}}$ 推出 guide accept 区域的
+错误率：
+
+$$
+e_{\text{accept}}
+=
+\operatorname{clip}
+\left(
+\frac{
+e_{\text{all}}-r_Ce_{\text{defer}}
+}{
+1-r_C
+},
+0,
+1
+\right)
+$$
+
+若 $r_C=1$，则退化为 $e_{\text{accept}}=e_{\text{all}}$。前面已经得到
+CRC error-mass 的采样比例 $s_{\text{accept}}$、$s_{\text{defer}}$，
+因此 global 难度选样的目标错误密度定义为：
+
+$$
+e_{\text{target}}
+=
+s_{\text{accept}}e_{\text{accept}}
++
+s_{\text{defer}}e_{\text{defer}}
+$$
+
+这个式子的含义是：即使 global 消融不显式划分 accept/defer，它仍然
+继承 CRC 对"本轮应该多关注多少错误区域"的估计。若 defer 并没有错误
+浓缩（$c_{\text{crc}}\approx1$），则 $s_{\text{defer}}$ 不会被明显放大，
+$e_{\text{target}}$ 会接近整体错误率，global 选样自然退化到接近 random。
+若 defer 明显浓缩错误，则 $e_{\text{target}}$ 会高于 $e_{\text{all}}$，
+但通常低于 $e_{\text{defer}}$，避免全取最难样本。
+
+最后，用 $e_{\text{target}}$ 反推出采样权重，而不是手写分位比例。令
+
+$$
+\epsilon=\frac{1}{n_g+1}
+$$
+
+这个 $\epsilon$ 沿用 CRC 有限样本修正中的尺度。对每个 pool 样本定义：
+
+$$
+\tilde{w}_i(\beta)
+=
+\left(
+\frac{p_i+\epsilon}{e_{\text{all}}+\epsilon}
+\right)^\beta
+$$
+
+其中 $\beta$ 控制相对 random 的难度偏置，$\beta=0$ 时所有样本等权，
+即退化为 random。$\beta$ 不是手动超参数，而是通过一维搜索自动确定，
+使加权候选池的平均难度接近 $e_{\text{target}}$：
+
+$$
+\frac{\sum_i \tilde{w}_i(\beta)p_i}{\sum_i \tilde{w}_i(\beta)}
+\approx
+e_{\text{target}}
+$$
+
+为了防止全取最难样本或被噪声 hard cases 主导，使用 CRC 错误浓缩比
+$c_{\text{crc}}$ 作为权重上限和下限：
+
+$$
+w_i(\beta)
+=
+\operatorname{clip}
+\left(
+\tilde{w}_i(\beta),
+\frac{1}{c_{\text{crc}}},
+c_{\text{crc}}
+\right)
+$$
+
+如果 $c_{\text{crc}}\le1$，则所有权重直接设为 1，表示当前 guide 没有
+证据支持难例过采样。给定最终权重 $w_i$ 后，从整个
+$\mathcal{U}_{\text{pool}}$ 中按无放回 PPS（probability proportional to
+size）采样 $B_t$ 个样本。输出时需要记录实际选中集合的平均
+$p_i$，用于检查是否接近 $e_{\text{target}}$。
+
+这一路径形成独立消融：
+
+$$
+S_t^{\text{NS-global}}
+=
+\operatorname{PPSSample}
+\left(
+\mathcal{U}_{\text{pool}},
+B_t,
+w_i(\beta)
+\right)
+$$
+
+它回答的问题是：**只使用 guide-NS 局部难度，不显式使用 accept/defer
+分区，是否已经能比 random 更有效？** 如果这个消融有效，再进入下一步
+组合消融：保留 CRC 的 $B_{\text{accept}}/B_{\text{defer}}$ 预算，在
+accept 和 defer 两个集合内部各自按 NS error mass 做 PPS 选样。
+
+对主流程而言，本轮训练候选集仍然由 accept 部分和 defer 部分组成：
 
 $$
 S_t
@@ -312,6 +492,33 @@ $$
 \quad
 |S_{\text{defer},t}|=B_{\text{defer}}
 $$
+
+NS error mass 版本不再沿用 global 消融里的
+$e_{\text{target}}/\beta$ 目标均值控制。原因是 accept 或 defer 子集的
+平均 $p_i$ 可能已经高于目标均值，此时目标均值逻辑会把
+$\beta$ 设为 0，导致该子集退化成均匀随机。组合策略里 CRC 已经负责了
+accept/defer 的外层预算，NS 只需要决定子集内部样本的相对概率：
+
+$$
+\Pr(i\mid h)
+=
+\frac{p_i}{\sum_{j\in\mathcal{U}_h}p_j},
+\quad
+h\in\{\text{accept},\text{defer}\}
+$$
+
+其中 $\mathcal{U}_h$ 是对应 CRC 子集，$p_i$ 是 guide-NS 单调校准后的
+错误概率。这样任意难度区域 $A\subseteq\mathcal{U}_h$ 的期望样本数为：
+
+$$
+\mathbb{E}[|S_h\cap A|]
+=
+B_h
+\frac{\sum_{i\in A}p_i}{\sum_{j\in\mathcal{U}_h}p_j}
+$$
+
+因此不同难度的样本都会以其 estimated error mass 自然进入训练集，不需要
+手写 bucket 数、分位比例或 top-k 阈值。
 
 **为什么不只选 defer？** 纯 defer 采样会让训练集过度 hard，尤其当 $r_U$ 很小但公式把 defer 大幅放大时，accept anchor 太少会导致模型输出分布变保守或训练不稳定。保留一部分 accept 样本，可以稳定原始分布，防止 recall 下降。
 
@@ -382,17 +589,17 @@ $$
 
 | 阶段               | 操作                                    | 大模型调用次数               | 小模型调用次数         |
 | ------------------ | --------------------------------------- | ---------------------------- | ---------------------- |
-| Phase 0            | 引导集+认证集标注                       | 300                          | 0                      |
+| Phase 0            | 引导集+认证集标注                       | 1200                         | 0                      |
 | Phase 0            | Embedding 计算                          | 0                            | N（用 embedding 模型） |
 | Phase 1 轮 0       | 小模型全量推理                          | 0                            | N                      |
 | Phase 1 轮 1-2     | 小模型 defer 集推理                     | 0                            | ~0.2N × 2              |
-| Phase 2 每轮       | 引导集推理                              | 0                            | 100 × 3                |
+| Phase 2 每轮       | 引导集推理                              | 0                            | 1000 × 3               |
 | Phase 4            | 认证集推理                              | 0                            | 200                    |
 | Phase 5 蒸馏标注   | 自适应 accept/defer 选样 + teacher 标注 | ~625（含 buffer）            | 0                      |
 | Phase 5 部署 defer | 残余 defer                              | $n_{\text{def}}$（目标 <2%） | 0                      |
 | **合计**           |                                         | **~925 + $n_{\text{def}}$**  | **~1.6N**              |
 
-对比全大模型方案：大模型调用 165,447 次。CKD 的大模型调用仅约 925 + 3,300 ≈ 4,225 次（假设最终 defer 率 2%），节省 97.4%。
+对比全大模型方案：大模型调用 165,447 次。CKD 的大模型调用仅约 1,825 + 3,300 ≈ 5,125 次（假设最终 defer 率 2%），节省 96.9%。
 
 ---
 
@@ -405,6 +612,7 @@ $$
 | 用 $r_U$ 和 $c_{\text{crc}}$ 自适应决定 accept/defer 比例 | $r_U$ 表示当前 pool 中 defer 区域大小；$c_{\text{crc}}$ 表示 defer 是否真的浓缩错误；二者共同决定是否应过采样 defer |
 | 保留 accept anchor                                        | 避免训练集过度 hard，降低 recall 掉、输出分布变保守的风险                                                           |
 | defer random / defer k-Center                             | random defer 作为稳定主线；k-Center 用于测试 diversity 是否带来额外收益                                             |
+| NS-difficulty global 消融                                 | 不手写 hard/easy 分位比例；用 guide 上的局部错误率和 CRC 推出的 $e_{\text{target}}$ 自动决定难度偏置                 |
 | Teacher confidence 过滤                                   | 过滤标签不可靠的样本，减少异类噪声对训练的损害（定理 1 式 13）                                                      |
 | 从基座重训（而非 continual training）                     | 保证模型是训练数据的纯函数，理论分析简洁，成本可忽略                                                                |
 | 每轮只对 defer 集重推理                                   | Accept 集的预测几乎不受 LoRA 微调影响（kernel 局部性），节省推理成本                                                |
@@ -440,6 +648,36 @@ $B_{\text{accept}}$ 和 $B_{\text{defer}}$ 只在选样阶段由目标训练样�
 | `eta_crc`    | defer boost 系数                             |
 | `s_accept`   | 最终 accept 采样比例                         |
 | `s_defer`    | 最终 defer 采样比例                          |
+
+如果启用 NS-difficulty global 选样，还需要额外记录：
+
+$$
+e_{\text{accept}},\quad e_{\text{target}},\quad
+\epsilon,\quad \beta,\quad c_{\text{crc}},\quad
+\overline{p}_{\text{pool}},\quad
+\overline{p}_{\text{selected}},\quad
+w_{\min},\quad w_{\max}
+$$
+
+对应表格字段：
+
+| 字段                    | 含义                                                                 |
+| ----------------------- | -------------------------------------------------------------------- |
+| `ns_score_source`        | 难度来源，例如 `guide_leave_one_out_isotonic`                        |
+| `ns_e_accept`            | 由 $e_{\text{all}}$、$r_C$、$e_{\text{defer}}$ 推出的 accept 错误率   |
+| `ns_e_target`            | CRC 推出的目标训练集错误密度                                         |
+| `ns_epsilon`             | 有限样本平滑项，默认 $1/(n_g+1)$                                     |
+| `ns_beta`                | 一维搜索得到的难度偏置指数，不手动指定                               |
+| `ns_weight_floor`        | 采样权重下限，默认 $1/c_{\text{crc}}$                                |
+| `ns_weight_cap`          | 采样权重上限，默认 $c_{\text{crc}}$                                  |
+| `ns_pool_mean_p_error`   | 全 pool 的平均校准局部错误概率                                       |
+| `ns_selected_mean_p_error` | 选中训练集的平均校准局部错误概率，应接近 `ns_e_target`              |
+| `ns_selected_easy_count` | 仅用于诊断：选中样本中低于 pool 中位 $p_i$ 的数量                    |
+| `ns_selected_hard_count` | 仅用于诊断：选中样本中高于 pool 中位 $p_i$ 的数量                    |
+| `ns_weighting`           | `target_mean` 表示 global 的目标均值权重；`ns-error-mass` 表示 split 内 $P(i)\propto p_i$ |
+
+---
+## 训练配置字段
 lora_r: 8
 lora_alpha: 16
 lora_dropout: 0.05
@@ -459,6 +697,6 @@ effective_batch_size: 16
 weight_decay: 0.01
 warmup_ratio: 0.03
 lr_scheduler_type: cosine
-max_seq_length: 512
+max_seq_length: 4096
 bf16: true
 gradient_checkpointing: true
