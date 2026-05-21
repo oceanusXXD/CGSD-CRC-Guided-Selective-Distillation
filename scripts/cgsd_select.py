@@ -216,11 +216,14 @@ def main() -> None:
         if isinstance(crc_payload, dict)
         else False
     )
+    if not neighbor_support_enabled:
+        raise ValueError("cgsd_select requires neighbor-support CRC; rerun cgsd_calibrate with --embeddings_path")
     embeddings_by_id = None
     embeddings_path = None
     needs_embeddings = (
         str(args.selection_method) == "crc-error-mass"
-        and (str(args.defer_strategy) == "k-center" or neighbor_support_enabled)
+        or str(args.defer_strategy) == "k-center"
+        or neighbor_support_enabled
     )
     if args.embeddings_path:
         embeddings_path = input_artifact_path(args.embeddings_path, PROJECT_ROOT / str(args.embeddings_path))

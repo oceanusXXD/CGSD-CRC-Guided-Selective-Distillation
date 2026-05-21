@@ -15,6 +15,12 @@ from .binary_protocol import BINARY_SYSTEM_PROMPT, binary_user_prompt, canonical
 
 T = TypeVar("T")
 
+# Qwen3 tokenizer_config uses this exact block when
+# `apply_chat_template(..., add_generation_prompt=True, enable_thinking=False)`.
+# Keep it in the shared prompt builder so LoRA training and vLLM raw
+# completions score the token after the no-thinking block, not `<think>`.
+CGSD_EMPTY_THINKING_BLOCK = "<think>\n\n</think>\n\n"
+
 
 @dataclass(frozen=True)
 class PairExample:
@@ -38,8 +44,12 @@ def format_cgsd_chat_prompt(query: str, document: str) -> str:
     chat template 消息边界标记。训练和推理都保留这套格式，可以让 LoRA
     看到的上下文与基座模型的指令微调格式一致。
 
-    CGSD 的 CRC 分数读取第一个 assistant output token 的 logits，因此
-    prompt 必须停在 `<|im_start|>assistant\n` 后面，不能提前追加答案。
+    Qwen3 的官方 no-thinking chat template 会在 generation prompt 后追加
+    空 thinking block。这里显式手写同一段内容，避免 raw completions
+    把 `<think>` 当成第一个 assistant output token。
+
+    CGSD 的 CRC 分数读取第一个分类答案 token 的 logits，因此 prompt
+    必须停在空 thinking block 后面，不能提前追加 `1/0` 答案。
     """
     return (
         "<|im_start|>system\n"
@@ -47,6 +57,7 @@ def format_cgsd_chat_prompt(query: str, document: str) -> str:
         "<|im_start|>user\n"
         f"{binary_user_prompt(query, document)}<|im_end|>\n"
         "<|im_start|>assistant\n"
+        f"{CGSD_EMPTY_THINKING_BLOCK}"
     )
 
 
@@ -60,8 +71,9 @@ def format_cgsd_chat_answer(label: int) -> str:
 
     assistant 回复按 Qwen chat/instruct 原生格式以 `<|im_end|>` 结束；
     真正的分类监督信号是首个规范化答案 token `1/0`。
-    文档要求 loss 只覆盖 assistant 回复部分，即规范化的 `1/0` 和
-    `<|im_end|>`；prompt 部分在 dataset 中会统一 mask 为 -100。
+    空 thinking block 属于 prompt，不属于监督答案；文档要求 loss 只覆盖
+    assistant 的分类回复部分，即规范化的 `1/0` 和 `<|im_end|>`。
+    prompt 部分在 dataset 中会统一 mask 为 -100。
     """
     return canonical_binary_answer(label) + "<|im_end|>"
 

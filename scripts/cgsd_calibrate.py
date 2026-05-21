@@ -40,7 +40,7 @@ from algorithms.cgsd import (
     crc_margin_cutoff,
     summarize_crc_decisions,
 )
-from scripts.run_cgsd import load_embeddings
+from scripts.run_cgsd import assert_embedding_coverage, load_embeddings
 from src.metrics import compute_binary_metrics
 from src.utils import read_json, write_json, write_jsonl
 
@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=0.0)
     parser.add_argument("--temperature", type=float, default=15.0)
     parser.add_argument("--embeddings_path", default=None)
+    parser.add_argument("--embedding_dim", type=int, default=0)
     parser.add_argument("--usage_path", default=None)
     add_stage_cache_args(parser)
     return parser.parse_args()
@@ -186,14 +187,18 @@ def main() -> None:
 
     calibration_predictions = read_jsonl(calibration_predictions_path)
     pool_predictions = read_jsonl(pool_predictions_path)
-    # 传入 --embeddings_path 会启用 neighbor-support CRC：
-    # D_guide 既用于中间阈值校准，也作为 pool 决策时的局部支持参考库。
-    # D_cert 保存在 final_calibration_student_predictions.jsonl，必须隔离到
-    # 最终认证阶段，不能参与这里的中间阈值、defer 定义或选样。
-    embeddings_by_id = (
-        load_embeddings(input_artifact_path(args.embeddings_path, PROJECT_ROOT / str(args.embeddings_path)))
-        if args.embeddings_path
-        else None
+    # CRC 一律启用 neighbor-support：D_guide 既用于中间阈值校准，也作为
+    # pool 决策时的局部支持参考库。没有 embedding 直接失败，避免旧的
+    # global-threshold CRC 混入实验。D_cert 保存在
+    # final_calibration_student_predictions.jsonl，只能用于最终认证阶段。
+    if not args.embeddings_path:
+        raise ValueError("--embeddings_path is required because all CRC uses neighbor-support")
+    embeddings_path = input_artifact_path(args.embeddings_path, PROJECT_ROOT / str(args.embeddings_path))
+    embeddings_by_id = load_embeddings(embeddings_path)
+    assert_embedding_coverage(
+        embeddings_by_id,
+        [*calibration_predictions, *pool_predictions],
+        expected_dim=int(args.embedding_dim),
     )
 
     previous_summary_path = (
@@ -290,6 +295,7 @@ def main() -> None:
         "s_accept": float(sampling_stats["s_accept"]),
         "s_defer": float(sampling_stats["s_defer"]),
         "pool_metrics": metrics,
+        "embeddings_path": str(embeddings_path),
     }
     write_jsonl(pool_decisions, pool_crc_predictions_path)
     write_json(record, round_summary_path)
@@ -312,6 +318,7 @@ def main() -> None:
             "teacher_api_file_calls": calibration_teacher_usage["teacher_api_file_calls"],
             "pool_crc_predictions_path": str(pool_crc_predictions_path),
             "round_summary_path": str(round_summary_path),
+            "embeddings_path": str(embeddings_path),
         },
     )
     print(json.dumps(record, ensure_ascii=False, sort_keys=True))

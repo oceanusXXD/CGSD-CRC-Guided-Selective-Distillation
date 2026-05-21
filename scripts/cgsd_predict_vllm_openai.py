@@ -16,11 +16,11 @@ import argparse
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import time
-from threading import Lock
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -49,7 +49,7 @@ from scripts.cgsd_cli_common import (
     write_stage_usage,
     StageCacheDecision,
 )
-from src.binary_protocol import BINARY_SCORE_SOURCE, BINARY_SYSTEM_PROMPT, binary_user_prompt, normalize_binary_token
+from src.binary_protocol import BINARY_SCORE_SOURCE, normalize_binary_token
 from src.data import PairExample, format_cgsd_chat_prompt
 from src.utils import read_json, write_json, write_jsonl
 
@@ -85,6 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--parallel_requests", type=int, default=1024)
     parser.add_argument("--request_retries", type=int, default=3)
+    parser.add_argument("--progress_timeout", type=int, default=None)
     parser.add_argument("--top_logprobs", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max_tokens", type=int, default=1)
@@ -96,6 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_model_len", type=int, default=40960)
     parser.add_argument("--max_num_seqs", type=int, default=4096)
     parser.add_argument("--max_num_batched_tokens", type=int, default=524288)
+    parser.add_argument("--max_lora_rank", type=int, default=None)
     parser.add_argument("--enforce_eager", action="store_true", default=True)
     parser.add_argument("--no_enforce_eager", dest="enforce_eager", action="store_false")
     add_stage_cache_args(parser)
@@ -124,16 +126,83 @@ def _server_model_names(args: argparse.Namespace) -> tuple[str, str]:
     return base_name, lora_name
 
 
+def _adapter_weight_path(adapter_dir: Path) -> Path | None:
+    for name in ("adapter_model.safetensors", "adapter_model.bin"):
+        candidate = adapter_dir / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _same_existing_path(left: str | Path, right: str | Path) -> bool:
+    left_path = Path(left)
+    right_path = Path(right)
+    if not left_path.is_absolute():
+        left_path = input_artifact_path(left_path, PROJECT_ROOT / str(left_path))
+    if not right_path.is_absolute():
+        right_path = input_artifact_path(right_path, PROJECT_ROOT / str(right_path))
+    if not left_path.exists() or not right_path.exists():
+        return str(left).rstrip("/") == str(right).rstrip("/")
+    return left_path.resolve() == right_path.resolve()
+
+
+def _validate_lora_checkpoint(*, checkpoint_dir: Path, model_path: Path) -> tuple[Path, int]:
+    """Validate PEFT LoRA files before starting vLLM.
+
+    Without this preflight, a missing or mismatched adapter can make the driver
+    exit during server startup; the child vLLM log then only shows a shutdown,
+    hiding the actual checkpoint problem in driver stderr.
+    """
+    model_config_path = checkpoint_dir / "model_config.json"
+    adapter_dir = checkpoint_dir / "adapter"
+    adapter_config_path = adapter_dir / "adapter_config.json"
+    missing = [
+        str(path)
+        for path in (model_config_path, adapter_dir, adapter_config_path)
+        if not path.exists()
+    ]
+    adapter_weight_path = _adapter_weight_path(adapter_dir)
+    if adapter_weight_path is None:
+        missing.append(str(adapter_dir / "adapter_model.safetensors|adapter_model.bin"))
+    if missing:
+        raise FileNotFoundError(
+            "LoRA checkpoint is incomplete; vLLM would fail to load it. "
+            f"Missing: {missing}. Expected a trained round checkpoint at {checkpoint_dir}."
+        )
+
+    model_config = read_json(model_config_path)
+    mode = str(model_config.get("mode", ""))
+    if not mode.startswith("lora"):
+        raise ValueError(f"Checkpoint {checkpoint_dir} is not a LoRA checkpoint: mode={mode!r}")
+
+    recorded_model_path = model_config.get("model_path")
+    if recorded_model_path and not _same_existing_path(str(recorded_model_path), model_path):
+        raise ValueError(
+            "LoRA checkpoint base model does not match the vLLM base model. "
+            f"checkpoint model_path={recorded_model_path!r}, requested model_path={str(model_path)!r}."
+        )
+
+    adapter_config = read_json(adapter_config_path)
+    if str(adapter_config.get("peft_type", "")).upper() != "LORA":
+        raise ValueError(
+            f"Adapter {adapter_config_path} is not a PEFT LoRA adapter: "
+            f"peft_type={adapter_config.get('peft_type')!r}"
+        )
+
+    rank = int(adapter_config.get("r", model_config.get("lora_r", 16)) or 16)
+    return adapter_dir, rank
+
+
 def _start_vllm_server(args: argparse.Namespace, *, checkpoint_dir: Path | None) -> subprocess.Popen[str]:
     host, port = _resolve_host_port(args.base_url)
-    model_path = str(input_artifact_path(args.model_path, PROJECT_ROOT / "model" / "qwen3-0.6b"))
+    model_path = input_artifact_path(args.model_path, PROJECT_ROOT / "model" / "qwen3-0.6b")
     served_model_name, lora_model_name = _server_model_names(args)
     cmd = [
         str(args.python_executable or sys.executable),
         "-m",
         "vllm.entrypoints.openai.api_server",
         "--model",
-        model_path,
+        str(model_path),
         "--host",
         host,
         "--port",
@@ -155,8 +224,24 @@ def _start_vllm_server(args: argparse.Namespace, *, checkpoint_dir: Path | None)
     if bool(args.enforce_eager):
         cmd.append("--enforce-eager")
     if checkpoint_dir is not None:
-        adapter_dir = checkpoint_dir / "adapter"
-        cmd.extend(["--enable-lora", "--lora-modules", f"{lora_model_name}={adapter_dir}"])
+        adapter_dir, adapter_rank = _validate_lora_checkpoint(
+            checkpoint_dir=checkpoint_dir,
+            model_path=model_path,
+        )
+        max_lora_rank = max(int(args.max_lora_rank or 0), adapter_rank, 16)
+        # vLLM serves the base model under `served_model_name` and each LoRA
+        # adapter under the left-hand name in `--lora-modules name=path`.
+        # Prediction requests must therefore use `lora_model_name`; otherwise
+        # they silently hit the base model instead of the trained round adapter.
+        cmd.extend(
+            [
+                "--enable-lora",
+                "--max-lora-rank",
+                str(max_lora_rank),
+                "--lora-modules",
+                f"{lora_model_name}={adapter_dir}",
+            ]
+        )
 
     log_path = (
         output_artifact_path(args.server_log_path, PROJECT_ROOT / "experiments" / "runs" / "vllm_openai.log")
@@ -170,29 +255,73 @@ def _start_vllm_server(args: argparse.Namespace, *, checkpoint_dir: Path | None)
     env.setdefault("PYTHONUNBUFFERED", "1")
     env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(PROJECT_ROOT),
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=handle,
-        stderr=subprocess.STDOUT,
-        close_fds=True,
-        text=True,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            text=True,
+            start_new_session=True,
+        )
+    except BaseException:
+        handle.close()
+        raise
     # 把日志句柄挂在 Popen 上，保证 server 生命周期内不会被提前关闭。
     setattr(proc, "_cgsd_log_handle", handle)
     return proc
 
 
+def _close_server_log_handle(proc: subprocess.Popen[str]) -> None:
+    handle = getattr(proc, "_cgsd_log_handle", None)
+    if handle is not None and not handle.closed:
+        handle.close()
+
+
+def _terminate_vllm_server(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        _close_server_log_handle(proc)
+        return
+    # vLLM may spawn engine/core worker children. Because the server is started
+    # in a new session, signal its process group so abnormal driver exits do not
+    # leave orphaned GPU worker processes behind.
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=30)
+    finally:
+        _close_server_log_handle(proc)
+
+
 def _client(args: argparse.Namespace) -> Any:
     from openai import OpenAI
+    import httpx
+
+    max_connections = max(1, int(args.parallel_requests))
 
     return OpenAI(
         api_key=str(args.api_key or "EMPTY"),
         base_url=str(args.base_url),
-        timeout=int(args.timeout),
+        timeout=float(args.timeout),
+        max_retries=0,
+        http_client=httpx.Client(
+            timeout=httpx.Timeout(float(args.timeout)),
+            limits=httpx.Limits(
+                max_connections=max_connections,
+                max_keepalive_connections=max_connections,
+            ),
+        ),
     )
 
 
@@ -213,22 +342,15 @@ def _wait_for_model(client: Any, *, model_name: str, timeout: int, proc: subproc
     raise RuntimeError(f"vLLM server did not expose model {model_name!r} before timeout") from last_exc
 
 
-def _messages(example: PairExample) -> list[dict[str, str]]:
-    """保留给旧调用点的兼容接口。"""
-    return [
-        {
-            "role": "system",
-            "content": BINARY_SYSTEM_PROMPT,
-        },
-        {
-            "role": "user",
-            "content": binary_user_prompt(example.query, example.document),
-        },
-    ]
-
-
 def _completion_prompt(example: PairExample) -> str:
-    """构造与训练阶段一致的手写 Qwen non-thinking prompt。"""
+    """构造与训练阶段一致的手写 Qwen3 no-thinking prompt。
+
+    这里必须走 `format_cgsd_chat_prompt`，不能只拼到
+    `<|im_start|>assistant\n`：Qwen3 raw completions 不会自动执行
+    chat template 的 `enable_thinking=False` 分支。如果 prompt 缺少
+    空 `<think>\n\n</think>\n\n` block，首 token 会高概率变成
+    `<think>`，后续就拿不到 `1/0` 的分类 logprobs。
+    """
     return format_cgsd_chat_prompt(example.query, example.document)
 
 
@@ -237,7 +359,14 @@ def _normalize_token(token: Any) -> str:
 
 
 def _collect_binary_logprobs(choice: Any) -> tuple[float | None, float | None]:
-    """从首个生成 token 的 top_logprobs 中提取 1/0 logprob。"""
+    """从首个生成 token 的 top_logprobs 中提取 1/0 logprob。
+
+    OpenAI `/v1/completions` 返回的是 legacy completion logprobs:
+    `choice.logprobs.top_logprobs[0]` 是 token->logprob dict。
+    Chat completions 的 logprobs 形状是 `content[].top_logprobs[]`；
+    下面保留兼容解析，但本脚本的 round0 路径应使用 completions，
+    这样不会让 vLLM 再套一层 chat template。
+    """
     completion_logprobs = getattr(choice, "logprobs", None)
     completion_top_logprobs = list(getattr(completion_logprobs, "top_logprobs", []) or [])
     if completion_top_logprobs and isinstance(completion_top_logprobs[0], dict):
@@ -289,24 +418,6 @@ def _collect_binary_logprobs(choice: Any) -> tuple[float | None, float | None]:
     return one_lp, zero_lp
 
 
-def _last_prompt_token_logprob(choice: Any, *, expected_token: str) -> float:
-    logprobs = getattr(choice, "logprobs", None)
-    tokens = list(getattr(logprobs, "tokens", []) or [])
-    token_logprobs = list(getattr(logprobs, "token_logprobs", []) or [])
-    if not token_logprobs:
-        raise RuntimeError(f"missing prompt logprobs for candidate {expected_token!r}")
-    if tokens:
-        token_norm = _normalize_token(tokens[-1])
-        if token_norm and token_norm != expected_token:
-            raise RuntimeError(
-                f"candidate token mismatch: expected {expected_token!r}, got {tokens[-1]!r}"
-            )
-    value = token_logprobs[-1]
-    if value is None:
-        raise RuntimeError(f"missing final prompt token logprob for candidate {expected_token!r}")
-    return float(value)
-
-
 def _predict_one(
     *,
     client: Any,
@@ -315,30 +426,40 @@ def _predict_one(
     args: argparse.Namespace,
 ) -> dict[str, Any]:
     last_exc: Exception | None = None
-    for attempt in range(max(1, int(args.request_retries))):
+    attempts = max(1, int(args.request_retries))
+    for attempt in range(attempts):
         try:
             prompt = _completion_prompt(example)
+            # Use raw completions, not chat completions. The prompt already
+            # contains the exact Qwen3 message markers and no-thinking block
+            # used by training; sending it through chat completions would ask
+            # vLLM to apply another chat template and can shift the scored
+            # first classification token.
             response = client.completions.create(
                 model=model_name,
-                prompt=[f"{prompt}1", f"{prompt}0"],
+                prompt=prompt,
                 temperature=float(args.temperature),
-                max_tokens=0,
-                logprobs=0,
-                echo=True,
+                max_tokens=int(args.max_tokens),
+                logprobs=int(args.top_logprobs),
             )
-            choices = list(response.choices)
-            choices_by_index = {
-                int(getattr(choice, "index", index)): choice
-                for index, choice in enumerate(choices)
-            }
-            one_lp = _last_prompt_token_logprob(choices_by_index[0], expected_token="one")
-            zero_lp = _last_prompt_token_logprob(choices_by_index[1], expected_token="zero")
+            choice = response.choices[0]
+            content = str(getattr(choice, "text", "") or "")
+            one_lp, zero_lp = _collect_binary_logprobs(choice)
+            if one_lp is None and zero_lp is None:
+                raise RuntimeError(
+                    f"missing 1/0 logprobs for output={content!r}; "
+                    "for Qwen3 this usually means the raw prompt did not end "
+                    "after the empty no-thinking block before scoring."
+                )
+            if one_lp is None:
+                one_lp = -100.0
+            if zero_lp is None:
+                zero_lp = -100.0
             # score 是有方向的 1-vs-0 margin；CRC 的无方向确信度
             # 在 calibrate 阶段再统一转成 sigmoid(abs(score)/T)。
             score = float(one_lp) - float(zero_lp)
             probability = float(1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, score)))))
             prediction = 1 if score > 0.0 else 0
-            content = str(int(prediction))
             row = dict(example.metadata)
             row.update(
                 {
@@ -361,8 +482,32 @@ def _predict_one(
             return row
         except Exception as exc:
             last_exc = exc
+            if attempt + 1 >= attempts:
+                print(
+                    json.dumps(
+                        {
+                            "event": "prediction_request_failed",
+                            "sample_id": str(example.sample_id),
+                            "attempts": attempts,
+                            "error": repr(exc),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                break
             time.sleep(min(8.0, 0.5 * (2**attempt)))
     raise RuntimeError(f"vLLM prediction failed for sample_id={example.sample_id}") from last_exc
+
+
+def _progress_timeout_seconds(args: argparse.Namespace) -> float:
+    if args.progress_timeout is not None:
+        return max(0.0, float(args.progress_timeout))
+    attempts = max(1, int(args.request_retries))
+    retry_sleep = sum(min(8.0, 0.5 * (2**attempt)) for attempt in range(max(0, attempts - 1)))
+    return max(300.0, float(args.timeout) * attempts + retry_sleep + 60.0)
 
 
 def _predict_many(
@@ -374,8 +519,8 @@ def _predict_many(
     output_path: Path,
     partial_path: Path,
 ) -> list[dict[str, Any]]:
-    # partial 文件用于长时间 vLLM 全量推理的断点续跑。多线程写入时
-    # 必须用锁，避免高并发下 JSONL 行交错导致文件损坏。
+    # partial 文件用于长时间 vLLM 全量推理的断点续跑；只由主线程写入，
+    # 避免高并发下 JSONL 行交错导致文件损坏。
     existing_by_id: dict[str, dict[str, Any]] = {}
     if partial_path.exists():
         for row in read_jsonl(partial_path):
@@ -400,23 +545,117 @@ def _predict_many(
         flush=True,
     )
     if pending:
-        write_lock = Lock()
-        with partial_path.open("a", encoding="utf-8") as writer, ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_predict_one, client=client, model_name=model_name, example=example, args=args): str(example.sample_id)
-                for example in pending
-            }
-            for future in as_completed(futures):
-                row = future.result()
-                sample_id = str(row["id"])
-                existing_by_id[sample_id] = row
-                with write_lock:
-                    writer.write(json.dumps(row, ensure_ascii=False))
-                    writer.write("\n")
-                    writer.flush()
-                    completed += 1
-                    if completed % 1000 == 0:
-                        print(json.dumps({"predicted": completed, "total": len(examples)}, sort_keys=True), flush=True)
+        pending_iter = iter(pending)
+        in_flight: dict[Any, tuple[str, float]] = {}
+        failures: list[tuple[str, str]] = []
+        progress_timeout = _progress_timeout_seconds(args)
+        poll_interval = min(10.0, max(1.0, progress_timeout / 20.0)) if progress_timeout > 0 else 10.0
+        last_progress_at = time.monotonic()
+        pool = ThreadPoolExecutor(max_workers=workers)
+
+        def submit_next() -> bool:
+            try:
+                example = next(pending_iter)
+            except StopIteration:
+                return False
+            future = pool.submit(_predict_one, client=client, model_name=model_name, example=example, args=args)
+            in_flight[future] = (str(example.sample_id), time.monotonic())
+            return True
+
+        try:
+            with partial_path.open("a", encoding="utf-8") as writer:
+                for _ in range(workers):
+                    if not submit_next():
+                        break
+
+                while in_flight:
+                    done, _ = wait(in_flight, timeout=poll_interval, return_when=FIRST_COMPLETED)
+                    now = time.monotonic()
+                    if not done:
+                        if progress_timeout > 0 and now - last_progress_at >= progress_timeout:
+                            stale = sorted(
+                                (
+                                    {
+                                        "sample_id": sample_id,
+                                        "in_flight_seconds": round(now - started_at, 1),
+                                    }
+                                    for sample_id, started_at in in_flight.values()
+                                ),
+                                key=lambda item: item["in_flight_seconds"],
+                                reverse=True,
+                            )[:20]
+                            message = (
+                                "no vLLM predictions completed before progress timeout; "
+                                f"completed={completed}, total={len(examples)}, "
+                                f"in_flight={len(in_flight)}, progress_timeout={progress_timeout:.1f}s"
+                            )
+                            print(
+                                json.dumps(
+                                    {
+                                        "event": "prediction_progress_timeout",
+                                        "completed": completed,
+                                        "total": len(examples),
+                                        "in_flight": len(in_flight),
+                                        "progress_timeout_seconds": progress_timeout,
+                                        "stale_samples": stale,
+                                    },
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                ),
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            raise TimeoutError(message)
+                        continue
+
+                    last_progress_at = now
+                    for future in done:
+                        sample_id, _started_at = in_flight.pop(future)
+                        try:
+                            row = future.result()
+                        except Exception as exc:
+                            error = repr(exc)
+                            failures.append((sample_id, error))
+                            print(
+                                json.dumps(
+                                    {
+                                        "event": "prediction_future_failed",
+                                        "sample_id": sample_id,
+                                        "error": error,
+                                    },
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                ),
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                        else:
+                            sample_id = str(row["id"])
+                            existing_by_id[sample_id] = row
+                            writer.write(json.dumps(row, ensure_ascii=False))
+                            writer.write("\n")
+                            writer.flush()
+                            completed += 1
+                            if completed % 1000 == 0 or completed == len(examples):
+                                print(
+                                    json.dumps({"predicted": completed, "total": len(examples)}, sort_keys=True),
+                                    flush=True,
+                                )
+                        submit_next()
+        except BaseException:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
+        if failures:
+            preview = [{"sample_id": sample_id, "error": error} for sample_id, error in failures[:20]]
+            raise RuntimeError(
+                "vLLM prediction failed after retries; "
+                f"failures={len(failures)}, completed={completed}, total={len(examples)}, preview={preview}"
+            )
         rows = [existing_by_id[str(example.sample_id)] for example in examples]
     else:
         rows = [existing_by_id[str(example.sample_id)] for example in examples]
@@ -596,13 +835,15 @@ def main() -> None:
         )
         print(json.dumps({"round_index": args.round_index, "predicted": len(predictions)}, ensure_ascii=False, sort_keys=True))
     finally:
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=30)
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+        if proc is not None:
+            # If the driver raises from any worker future, this finally block
+            # intentionally stops the child vLLM server. In that case the
+            # server log will show "Shutdown initiated"; the driver stdout/stderr
+            # log is the place to inspect for the real Python exception.
+            _terminate_vllm_server(proc)
 
 
 if __name__ == "__main__":

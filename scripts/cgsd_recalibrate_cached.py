@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from algorithms.cgsd import apply_crc_decisions, calibrate_crc, summarize_crc_decisions
 from scripts.cgsd_cli_common import binary_to_int, read_jsonl
+from scripts.run_cgsd import load_embeddings
 from src.metrics import compute_binary_metrics
 
 
@@ -67,6 +68,7 @@ def recompute_round(
     eval_set: str,
     final_calibration: bool = False,
     same_final_calibration: bool = False,
+    embeddings_by_id: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     round_dir = run_dir / f"round_{round_index}"
     cal_name = (
@@ -81,11 +83,17 @@ def recompute_round(
         "final_calibration": "final_calibration_student_predictions.jsonl",
     }[eval_set]
     eval_rows = read_jsonl(round_dir / eval_name)
-    crc = calibrate_crc(calibration_rows, alpha=alpha, temperature=temperature)
+    if embeddings_by_id is None:
+        raise ValueError("recalibration requires embeddings; global no-embedding CRC is not allowed")
+    crc = calibrate_crc(calibration_rows, alpha=alpha, temperature=temperature, embeddings_by_id=embeddings_by_id)
     decided_rows = apply_crc_decisions(
         eval_rows,
         lambda_hat=crc.lambda_hat,
         temperature=temperature,
+        embeddings_by_id=embeddings_by_id,
+        support_rows=calibration_rows,
+        crc_result=crc,
+        neighbor_exclude_self=bool(eval_set != "pool"),
     )
     decision_summary = summarize_crc_decisions(decided_rows)
     metrics = _binary_metrics(eval_rows)
@@ -129,10 +137,15 @@ def main() -> None:
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--eval_set", choices=("pool", "calibration", "final_calibration"), default="pool")
     parser.add_argument("--same_final_calibration", action="store_true", default=False)
+    parser.add_argument("--embeddings_path", required=True)
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
     output_dir = Path(args.output_dir)
+    embeddings_path = Path(args.embeddings_path)
+    if not embeddings_path.is_absolute() and not embeddings_path.exists():
+        embeddings_path = PROJECT_ROOT / embeddings_path
+    embeddings_by_id = load_embeddings(embeddings_path)
     summaries = [
         recompute_round(
             run_dir=run_dir,
@@ -141,6 +154,7 @@ def main() -> None:
             alpha=args.alpha,
             temperature=args.temperature,
             eval_set=args.eval_set,
+            embeddings_by_id=embeddings_by_id,
         )
         for round_index in range(args.rounds + 1)
     ]
@@ -153,6 +167,7 @@ def main() -> None:
         eval_set=args.eval_set,
         final_calibration=True,
         same_final_calibration=args.same_final_calibration,
+        embeddings_by_id=embeddings_by_id,
     )
     compact = {
         "source_run_dir": str(run_dir),
@@ -160,6 +175,7 @@ def main() -> None:
         "temperature": float(args.temperature),
         "eval_set": str(args.eval_set),
         "same_final_calibration": bool(args.same_final_calibration),
+        "embeddings_path": str(embeddings_path),
         "rounds": summaries,
         "final": final_summary,
     }

@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label_field", default="groundtruth")
     parser.add_argument("--embeddings_path", required=True)
     parser.add_argument("--embedding_dim", type=int, default=1024)
-    parser.add_argument("--n_calibration", type=int, default=200)
+    parser.add_argument("--n_calibration", type=int, default=1000)
     parser.add_argument("--n_final_calibration", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     add_stage_cache_args(parser)

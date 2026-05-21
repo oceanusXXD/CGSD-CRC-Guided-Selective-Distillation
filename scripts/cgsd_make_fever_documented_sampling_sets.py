@@ -25,6 +25,7 @@ from algorithms.cgsd import (  # noqa: E402
 )
 from scripts.cgsd_calibrate import compute_crc_sampling_statistics  # noqa: E402
 from scripts.cgsd_cli_common import binary_to_int, read_jsonl  # noqa: E402
+from scripts.run_cgsd import assert_embedding_coverage, load_embeddings  # noqa: E402
 from src.utils import write_json, write_jsonl  # noqa: E402
 
 
@@ -42,11 +43,21 @@ def parse_args() -> argparse.Namespace:
         default="experiments/inputs/fever/documented_sampling_500_seeds1_2_3_t15_alpha010",
     )
     parser.add_argument("--test_size", type=int, default=10_000)
-    parser.add_argument("--guide_size", type=int, default=500)
+    parser.add_argument("--guide_size", type=int, default=1000)
     parser.add_argument("--train_size", type=int, default=500)
     parser.add_argument("--seeds", default="1,2,3")
+    parser.add_argument(
+        "--methods",
+        default=",".join(METHODS),
+        help=(
+            "Comma-separated methods to generate. Accepts hyphen or underscore names: "
+            f"{', '.join(METHODS)}."
+        ),
+    )
     parser.add_argument("--temperature", type=float, default=15.0)
     parser.add_argument("--alpha", type=float, default=0.1)
+    parser.add_argument("--embeddings_path", default="experiments/inputs/fever/embeddings.npy")
+    parser.add_argument("--embedding_dim", type=int, default=0)
     parser.add_argument("--teacher_beta", type=float, default=1.0)
     parser.add_argument(
         "--write_pool_artifacts",
@@ -101,6 +112,18 @@ def parse_int_csv(text: str) -> list[int]:
     if len(values) != len(set(values)):
         raise ValueError("--seeds contains duplicate values")
     return values
+
+
+def parse_methods_csv(text: str) -> list[str]:
+    methods = [part.strip().replace("_", "-") for part in str(text or "").split(",") if part.strip()]
+    if not methods:
+        raise ValueError("--methods cannot be empty")
+    invalid = [method for method in methods if method not in METHODS]
+    if invalid:
+        raise ValueError(f"--methods contains unsupported values: {invalid}; supported values: {list(METHODS)}")
+    if len(methods) != len(set(methods)):
+        raise ValueError("--methods contains duplicate values")
+    return methods
 
 
 def _subset_rows(ids: Sequence[str], rows_by_id: Mapping[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -190,9 +213,11 @@ def generate_for_seed(
     *,
     args: argparse.Namespace,
     seed: int,
+    methods: Sequence[str],
     all_rows: Sequence[dict[str, Any]],
     rows_by_id: Mapping[str, dict[str, Any]],
     output_root: Path,
+    embeddings_by_id: Mapping[str, Any],
 ) -> dict[str, Any]:
     seed_output_dir = output_root / f"seed{int(seed)}"
     round0_dir = seed_output_dir / "round_0"
@@ -205,16 +230,28 @@ def generate_for_seed(
     guide_rows = _subset_rows(split["guide_ids"], rows_by_id)
     pool_rows = _subset_rows(split["pool_ids"], rows_by_id)
 
-    crc = calibrate_crc(guide_rows, alpha=float(args.alpha), temperature=float(args.temperature))
+    crc = calibrate_crc(
+        guide_rows,
+        alpha=float(args.alpha),
+        temperature=float(args.temperature),
+        embeddings_by_id=embeddings_by_id,
+    )
     guide_decisions = apply_crc_decisions(
         guide_rows,
         lambda_hat=crc.lambda_hat,
         temperature=float(args.temperature),
+        embeddings_by_id=embeddings_by_id,
+        support_rows=guide_rows,
+        crc_result=crc,
+        neighbor_exclude_self=True,
     )
     pool_decisions = apply_crc_decisions(
         pool_rows,
         lambda_hat=crc.lambda_hat,
         temperature=float(args.temperature),
+        embeddings_by_id=embeddings_by_id,
+        support_rows=guide_rows,
+        crc_result=crc,
     )
     pool_decisions_by_id = {_row_id(row): dict(row) for row in pool_decisions}
     sampling_stats = compute_crc_sampling_statistics(
@@ -244,6 +281,7 @@ def generate_for_seed(
         "guide_summary": guide_summary,
         "sampling_statistics": sampling_stats,
         "source_predictions_path": str(args.all_predictions_path),
+        "embeddings_path": str(args.embeddings_path),
     }
     write_json(
         {
@@ -252,7 +290,7 @@ def generate_for_seed(
             "guide_size": int(args.guide_size),
             "pool_size": len(split["pool_ids"]),
             "seed": int(seed),
-            "split_algorithm": "sorted_ids_random_shuffle_test10000_guide500_pool_rest_v1",
+            "split_algorithm": f"sorted_ids_random_shuffle_test10000_guide{int(args.guide_size)}_pool_rest_v1",
         },
         seed_output_dir / "split_ids.json",
     )
@@ -261,8 +299,12 @@ def generate_for_seed(
         seed_output_dir / "D_test_10000.ids.json",
     )
     write_json(
-        {"name": f"D_guide_500_seed{int(seed)}", "count": len(split["guide_ids"]), "ids": split["guide_ids"]},
-        seed_output_dir / "D_guide_500.ids.json",
+        {
+            "name": f"D_guide_{int(args.guide_size)}_seed{int(seed)}",
+            "count": len(split["guide_ids"]),
+            "ids": split["guide_ids"],
+        },
+        seed_output_dir / f"D_guide_{int(args.guide_size)}.ids.json",
     )
     if bool(args.write_pool_artifacts):
         write_jsonl(_subset_rows(split["test_ids"], rows_by_id), seed_output_dir / "D_test_10000.jsonl")
@@ -289,7 +331,7 @@ def generate_for_seed(
         lambda_hat=float(crc.lambda_hat),
         alpha=float(args.alpha),
     )
-    for method in METHODS:
+    for method in methods:
         plan = adaptive_plan if method == "crc-error-mass" else None
         selection = select_documented_training_samples(
             pool_decisions,
@@ -300,7 +342,7 @@ def generate_for_seed(
             sampling_plan=plan,
             accept_strategy="random",
             defer_strategy="random",
-            embeddings_by_id=None,
+            embeddings_by_id=embeddings_by_id,
         )
         summaries[method] = write_dataset(
             output_dir=seed_output_dir,
@@ -338,34 +380,49 @@ def main() -> None:
     started = time.time()
     output_dir = Path(args.output_dir)
     seeds = parse_int_csv(args.seeds)
+    methods = parse_methods_csv(args.methods)
 
     all_rows = read_jsonl(args.all_predictions_path)
     rows_by_id = {_row_id(row): dict(row) for row in all_rows}
     if len(rows_by_id) != len(all_rows):
         raise ValueError("all_predictions_path contains duplicate ids")
+    if not args.embeddings_path:
+        raise ValueError("--embeddings_path is required because all CRC uses neighbor-support")
+    embeddings_path = Path(args.embeddings_path)
+    if not embeddings_path.is_absolute() and not embeddings_path.exists():
+        embeddings_path = PROJECT_ROOT / embeddings_path
+    embeddings_by_id = load_embeddings(embeddings_path)
+    assert_embedding_coverage(
+        embeddings_by_id,
+        all_rows,
+        expected_dim=int(args.embedding_dim),
+    )
 
     seed_summaries: dict[str, Any] = {}
     for seed in seeds:
         seed_summaries[f"seed{int(seed)}"] = generate_for_seed(
             args=args,
             seed=int(seed),
+            methods=methods,
             all_rows=all_rows,
             rows_by_id=rows_by_id,
             output_root=output_dir,
+            embeddings_by_id=embeddings_by_id,
         )
 
     total_datasets = sum(int(summary["datasets_count"]) for summary in seed_summaries.values())
     aggregate = {
         "stage_name": "cgsd_make_fever_documented_sampling_sets",
         "elapsed_seconds": round(time.time() - started, 2),
-        "methods": list(METHODS),
+        "methods": list(methods),
         "seeds": seeds,
-        "expected_dataset_count": len(METHODS) * len(seeds),
+        "expected_dataset_count": len(methods) * len(seeds),
         "dataset_count": total_datasets,
         "train_size": int(args.train_size),
         "temperature": float(args.temperature),
         "alpha": float(args.alpha),
         "source_predictions_path": str(args.all_predictions_path),
+        "embeddings_path": str(embeddings_path),
         "write_pool_artifacts": bool(args.write_pool_artifacts),
         "seed_summaries": seed_summaries,
     }

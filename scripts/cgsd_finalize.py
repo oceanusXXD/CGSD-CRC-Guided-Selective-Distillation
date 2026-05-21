@@ -111,17 +111,18 @@ def main() -> None:
     embeddings_by_id = None
     support_rows = None
     crc_result = None
-    if bool(isinstance(crc_payload, dict) and crc_payload.get("neighbor_support_enabled", False)):
-        if not args.embeddings_path:
-            raise ValueError("--embeddings_path is required to finalize neighbor-support CRC decisions")
-        if not final_calibration_rows:
-            raise ValueError(
-                "neighbor-support finalize requires non-empty final calibration predictions "
-                "as the D_cert support bank"
-            )
-        embeddings_by_id = load_embeddings(input_artifact_path(args.embeddings_path, PROJECT_ROOT / str(args.embeddings_path)))
-        support_rows = final_calibration_rows
-        crc_result = crc_payload
+    if not bool(isinstance(crc_payload, dict) and crc_payload.get("neighbor_support_enabled", False)):
+        raise ValueError("cgsd_finalize requires neighbor-support CRC; rerun calibration with --embeddings_path")
+    if not args.embeddings_path:
+        raise ValueError("--embeddings_path is required because all CRC uses neighbor-support")
+    if not final_calibration_rows:
+        raise ValueError(
+            "neighbor-support finalize requires non-empty final calibration predictions "
+            "as the D_cert support bank"
+        )
+    embeddings_by_id = load_embeddings(input_artifact_path(args.embeddings_path, PROJECT_ROOT / str(args.embeddings_path)))
+    support_rows = final_calibration_rows
+    crc_result = crc_payload
     train_rows_for_summary = (
         read_jsonl(input_artifact_path(args.train_rows_path, output_dir / "cgsd_train_rows.jsonl"))
         if args.train_rows_path
