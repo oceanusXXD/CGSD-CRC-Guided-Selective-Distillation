@@ -1,0 +1,42 @@
+{
+  "all_predictions_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/all_student_predictions.jsonl",
+  "cache": {
+    "action": "run",
+    "cache_hit": false,
+    "cache_policy": "reuse",
+    "existing_outputs": [],
+    "missing_outputs": [
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/all_student_predictions.jsonl",
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/calibration_student_predictions.jsonl",
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/final_calibration_student_predictions.jsonl",
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/pool_student_predictions.jsonl",
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/predict_train_label_snapshot.json",
+      "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/predict_usage.json"
+    ],
+    "stage_name": "cgsd_predict_vllm_openai"
+  },
+  "calibration_predictions_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/calibration_student_predictions.jsonl",
+  "estimated_student_completion_tokens": 49990,
+  "estimated_student_prompt_tokens": 17609045,
+  "final_calibration_predictions_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/final_calibration_student_predictions.jsonl",
+  "groundtruth_substitute_calls": 49990,
+  "parallel_requests": 4096,
+  "partial_predictions_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/all_student_predictions.partial.jsonl",
+  "pool_predictions_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/round_0/pool_student_predictions.jsonl",
+  "round_index": 0,
+  "stage_name": "cgsd_predict_vllm_openai",
+  "student_model_calls": 49990,
+  "student_model_role": "base_model",
+  "teacher_api_file_calls": 0,
+  "teacher_label_usage": {
+    "estimated_completion_tokens": 49990,
+    "estimated_prompt_tokens": 17609045,
+    "groundtruth_substitute_calls": 49990,
+    "purpose": "predict_teacher_label_attachment",
+    "teacher_api_file_calls": 0,
+    "teacher_calls": 49990,
+    "unknown_teacher_source_calls": 0
+  },
+  "vllm_base_url": "http://127.0.0.1:18021/v1",
+  "vllm_model": "qwen3-0.6b"
+}

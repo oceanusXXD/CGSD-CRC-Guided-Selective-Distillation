@@ -39,11 +39,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ids_path", default=None)
     parser.add_argument("--meta_path", default=None)
     parser.add_argument("--model_path", default=DEFAULT_EMBEDDING_MODEL)
+    parser.add_argument("--backend", choices=["transformers", "vllm"], default="transformers")
     parser.add_argument("--request_batch_size", type=int, default=16)
     parser.add_argument("--flush_rows", type=int, default=256)
     parser.add_argument("--max_length", type=int, default=4096)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--torch_dtype", choices=["auto", "bfloat16", "float16", "float32"], default="bfloat16")
+    parser.add_argument("--tensor_parallel_size", type=int, default=1)
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.92)
+    parser.add_argument("--enforce_eager", action="store_true")
     parser.add_argument("--query_field", default="query")
     parser.add_argument("--document_field", default="document")
     parser.add_argument("--id_field", default="id")
@@ -73,6 +77,18 @@ def resolve_torch_dtype(dtype_name: str, device: torch.device) -> torch.dtype:
     if dtype_name == "float32":
         return torch.float32
     raise ValueError(f"unsupported torch dtype: {dtype_name}")
+
+
+def resolve_vllm_dtype(dtype_name: str) -> str:
+    if dtype_name == "auto":
+        return "auto"
+    if dtype_name == "bfloat16":
+        return "bfloat16"
+    if dtype_name == "float16":
+        return "float16"
+    if dtype_name == "float32":
+        return "float32"
+    raise ValueError(f"unsupported vLLM dtype: {dtype_name}")
 
 
 def last_token_pool(hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -123,6 +139,30 @@ def load_transformers_embedding_model(
     return tokenizer, model, device, uses_lm_hidden_states, dtype
 
 
+def load_vllm_embedding_model(
+    model_path: str | Path,
+    *,
+    dtype_name: str,
+    max_length: int,
+    tensor_parallel_size: int,
+    gpu_memory_utilization: float,
+    enforce_eager: bool,
+) -> Any:
+    from vllm import LLM
+
+    return LLM(
+        model=str(model_path),
+        runner="pooling",
+        convert="embed",
+        trust_remote_code=True,
+        dtype=resolve_vllm_dtype(dtype_name),
+        tensor_parallel_size=int(tensor_parallel_size),
+        gpu_memory_utilization=float(gpu_memory_utilization),
+        enforce_eager=bool(enforce_eager),
+        max_model_len=int(max_length),
+    )
+
+
 def embed_texts_transformers(
     *,
     model: torch.nn.Module,
@@ -159,6 +199,30 @@ def embed_texts_transformers(
             pooled = torch.nn.functional.normalize(pooled.float(), p=2, dim=1)
         vectors.append(pooled.cpu().numpy().astype(np.float32))
         del encoded, outputs, hidden_states, pooled
+    if not vectors:
+        return np.empty((0, 0), dtype=np.float32)
+    return np.vstack(vectors).astype(np.float32)
+
+
+def embed_texts_vllm(
+    *,
+    model: Any,
+    texts: list[str],
+    batch_size: int,
+) -> np.ndarray:
+    vectors: list[np.ndarray] = []
+    safe_batch_size = max(1, int(batch_size))
+    for start in range(0, len(texts), safe_batch_size):
+        batch_texts = texts[start : start + safe_batch_size]
+        outputs = model.embed(batch_texts, use_tqdm=False)
+        if len(outputs) != len(batch_texts):
+            raise RuntimeError(f"embedding response mismatch: expected {len(batch_texts)} got {len(outputs)}")
+        batch_vectors = np.asarray([item.outputs.embedding for item in outputs], dtype=np.float32)
+        if batch_vectors.ndim != 2 or batch_vectors.shape[0] != len(batch_texts):
+            raise RuntimeError(f"embedding response shape mismatch: expected {len(batch_texts)} got {batch_vectors.shape}")
+        norms = np.linalg.norm(batch_vectors, axis=1, keepdims=True)
+        norms = np.where(norms > 0, norms, 1.0).astype(np.float32)
+        vectors.append((batch_vectors / norms).astype(np.float32))
     if not vectors:
         return np.empty((0, 0), dtype=np.float32)
     return np.vstack(vectors).astype(np.float32)
@@ -251,11 +315,31 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
     request_count = 0
     input_count = 0
     started_at = time.time()
-    tokenizer, model, device, uses_lm_hidden_states, dtype = load_transformers_embedding_model(
-        args.model_path,
-        device_name=str(args.device),
-        dtype_name=str(args.torch_dtype),
-    )
+    backend = str(args.backend)
+    tokenizer: Any | None = None
+    uses_lm_hidden_states = False
+    device: torch.device | None = None
+    dtype_label = resolve_vllm_dtype(str(args.torch_dtype))
+    if backend == "transformers":
+        tokenizer, model, device, uses_lm_hidden_states, dtype = load_transformers_embedding_model(
+            args.model_path,
+            device_name=str(args.device),
+            dtype_name=str(args.torch_dtype),
+        )
+        dtype_label = str(dtype).replace("torch.", "")
+        device_label = str(device)
+    elif backend == "vllm":
+        model = load_vllm_embedding_model(
+            args.model_path,
+            dtype_name=str(args.torch_dtype),
+            max_length=int(args.max_length),
+            tensor_parallel_size=int(args.tensor_parallel_size),
+            gpu_memory_utilization=float(args.gpu_memory_utilization),
+            enforce_eager=bool(args.enforce_eager),
+        )
+        device_label = "vllm"
+    else:
+        raise ValueError(f"unsupported embedding backend: {backend}")
     if row_cursor:
         if not output_path.exists():
             raise FileExistsError(f"embedding id cache exists but matrix is missing: {output_path}")
@@ -266,7 +350,7 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError(f"embedding matrix row count mismatch: expected {total_rows} got {memmap.shape[0]}")
         dimension = int(memmap.shape[1])
 
-    progress = tqdm(total=total_rows, desc="fever embeddings", unit="row")
+    progress = tqdm(total=total_rows, desc="cgsd embeddings", unit="row")
     if row_cursor:
         progress.update(row_cursor)
 
@@ -285,15 +369,24 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
 
         request_count += int(math.ceil(len(batch_texts) / max(1, int(args.request_batch_size))))
         input_count += len(batch_texts)
-        flat_vectors = embed_texts_transformers(
-            model=model,
-            tokenizer=tokenizer,
-            device=device,
-            texts=batch_texts,
-            batch_size=int(args.request_batch_size),
-            max_length=int(args.max_length),
-            uses_lm_hidden_states=uses_lm_hidden_states,
-        )
+        if backend == "transformers":
+            assert tokenizer is not None
+            assert device is not None
+            flat_vectors = embed_texts_transformers(
+                model=model,
+                tokenizer=tokenizer,
+                device=device,
+                texts=batch_texts,
+                batch_size=int(args.request_batch_size),
+                max_length=int(args.max_length),
+                uses_lm_hidden_states=uses_lm_hidden_states,
+            )
+        else:
+            flat_vectors = embed_texts_vllm(
+                model=model,
+                texts=batch_texts,
+                batch_size=int(args.request_batch_size),
+            )
         flat_vectors = np.asarray(flat_vectors, dtype=np.float32)
         if flat_vectors.ndim != 2 or flat_vectors.shape[0] != len(batch_texts):
             raise RuntimeError(f"embedding response mismatch: expected {len(batch_texts)} got {flat_vectors.shape}")
@@ -321,6 +414,7 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         progress.update(len(batch_rows))
 
     # ids_path 记录已经落盘的样本前缀；重启后直接从该前缀之后继续。
+    pending_text_limit = int(args.request_batch_size) if backend == "transformers" else int(args.flush_rows)
     for row in rows[row_cursor:]:
         sample_id = str(row[args.id_field])
         formatted = pair_texts_for_row(
@@ -331,7 +425,7 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
             target_chars=int(args.target_chars),
             overlap_chars=int(args.overlap_chars),
         )
-        if pending_ids and (len(pending_ids) >= int(args.flush_rows) or len(pending_texts) + len(formatted) > int(args.request_batch_size)):
+        if pending_ids and (len(pending_ids) >= int(args.flush_rows) or len(pending_texts) + len(formatted) > pending_text_limit):
             flush_pending()
         start = cursor
         pending_texts.extend(formatted)
@@ -345,22 +439,22 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         memmap.flush()
         del memmap
     del model
-    if device.type == "cuda":
+    if (device is not None and device.type == "cuda") or (backend == "vllm" and torch.cuda.is_available()):
         torch.cuda.empty_cache()
     if row_cursor != total_rows:
         raise RuntimeError(f"embedding row count mismatch: expected {total_rows} wrote {row_cursor}")
     meta = {
         "data_path": str(data_path),
         "embedding_model": str(args.model_path),
-        "embedding_backend": "transformers",
+        "embedding_backend": backend,
         "mode": str(args.mode),
         "embedding_text_format": "Query:\\n{query}\\n\\nDocument:\\n{document}",
         "pair_embedding_version": "cgsd_query_document_v1",
         "row_count": int(total_rows),
         "dimension": int(dimension or 0),
         "max_length": int(args.max_length),
-        "device": str(device),
-        "torch_dtype": str(dtype).replace("torch.", ""),
+        "device": device_label,
+        "torch_dtype": dtype_label,
         "query_field": str(args.query_field),
         "document_field": str(args.document_field),
         "id_field": str(args.id_field),
@@ -368,6 +462,9 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         "overlap_chars": int(args.overlap_chars),
         "request_batch_size": int(args.request_batch_size),
         "flush_rows": int(args.flush_rows),
+        "tensor_parallel_size": int(args.tensor_parallel_size),
+        "gpu_memory_utilization": float(args.gpu_memory_utilization),
+        "enforce_eager": bool(args.enforce_eager),
         "request_count": int(request_count),
         "input_count": int(input_count),
         "elapsed_seconds": float(time.time() - started_at),

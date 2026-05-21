@@ -1,0 +1,14 @@
+{
+  "source": "Cascade/datasets/public/imdb/ground_truth.json",
+  "documents_source": "Cascade/datasets/public/imdb/documents.json",
+  "queries_source": "Cascade/datasets/public/imdb/queries.json",
+  "filter": "query_id == 2",
+  "num_rows": 49990,
+  "label_counts": {
+    "0": 36247,
+    "1": 13743
+  },
+  "overlength_removed_max2048": 10,
+  "overlength_removed_manifest": "outputs/runs/overlength_removed_records_max2048.jsonl",
+  "note": "Local extracted dataset used by default; runtime scripts no longer default to Cascade."
+}

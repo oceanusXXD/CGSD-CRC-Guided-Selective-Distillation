@@ -1,0 +1,49 @@
+{
+  "dataset": "imdb_query_id_1",
+  "query_id": "1",
+  "public_query": "Is the following review positive?",
+  "data_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/data.jsonl",
+  "split_ids_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/cgsd_split_ids.json",
+  "full_all_split_ids_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/full_all_split_ids.json",
+  "embeddings_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/embeddings.npy",
+  "embeddings_ids_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/embeddings.ids.jsonl",
+  "embeddings_meta_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/embeddings.meta.json",
+  "source_data_path": "/teamspace/studios/this_studio/LLM_hidden_test/datasets/imdb_query_id_1.jsonl",
+  "source_metadata_path": "/teamspace/studios/this_studio/LLM_hidden_test/datasets/imdb_query_id_1.metadata.json",
+  "rows": 49990,
+  "split_counts": {
+    "train": 49990
+  },
+  "label_counts": {
+    "0": 24999,
+    "1": 24991
+  },
+  "source_metadata": {
+    "source": "Cascade/datasets/public/imdb/ground_truth.json",
+    "documents_source": "Cascade/datasets/public/imdb/documents.json",
+    "queries_source": "Cascade/datasets/public/imdb/queries.json",
+    "filter": "query_id == 1",
+    "num_rows": 49990,
+    "label_counts": {
+      "0": 24999,
+      "1": 24991
+    },
+    "overlength_removed_max2048": 10,
+    "overlength_removed_manifest": "outputs/runs/overlength_removed_records_max2048.jsonl",
+    "note": "Local extracted dataset used by default; runtime scripts no longer default to Cascade."
+  },
+  "embedding_status": "generated_vllm",
+  "preferred_pool_size": 48990,
+  "preferred_guide_split_ids_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/qwen06b_full_guide1000_seed42_split_ids.json",
+  "preferred_guide_ids_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/inputs/imdb/query_id_1/qwen06b_full_guide1000_seed42.ids.json",
+  "preferred_guide_size": 1000,
+  "preferred_guide_sampling": "random_1000_seed42_unbalanced",
+  "preferred_guide_label_counts": {
+    "0": 502,
+    "1": 498
+  },
+  "preferred_pool_label_counts": {
+    "0": 24497,
+    "1": 24493
+  }
+}
