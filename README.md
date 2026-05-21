@@ -329,6 +329,65 @@ python scripts/evaluate.py \
 
 指标包括 `accuracy`、`precision`、`recall`、`f1`、`macro_F1`。
 
+也可以走 vLLM/OpenAI-compatible 路径评估。这个方式和 CGSD 预测阶段使用
+同一套 raw completion + `1/0` logprob 协议，适合大评估集或需要和线上
+vLLM serving 行为保持一致的结果。
+
+先把评估集写成只含 pool 的临时 split：
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+data_path = Path("experiments/inputs/fever/data.jsonl")
+split_path = Path("experiments/runs/fever/example_run/eval_vllm_split_ids.json")
+ids = []
+with data_path.open("r", encoding="utf-8") as handle:
+    for line in handle:
+        if line.strip():
+            ids.append(str(json.loads(line)["id"]))
+
+split_path.parent.mkdir(parents=True, exist_ok=True)
+split_path.write_text(
+    json.dumps(
+        {"calibration_ids": [], "final_calibration_ids": [], "pool_ids": ids},
+        ensure_ascii=False,
+        indent=2,
+    ),
+    encoding="utf-8",
+)
+PY
+```
+
+再用 vLLM 评估 LoRA checkpoint：
+
+```bash
+python scripts/cgsd_predict_vllm_openai.py \
+  --output_dir experiments/runs/fever/example_run/eval_vllm \
+  --round_index 1 \
+  --checkpoint_dir experiments/runs/fever/example_run/round_1/model \
+  --model_path /teamspace/studios/this_studio/model/qwen3-0.6b \
+  --data_path experiments/inputs/fever/data.jsonl \
+  --split_ids_path experiments/runs/fever/example_run/eval_vllm_split_ids.json \
+  --start_server \
+  --base_url http://127.0.0.1:18021/v1 \
+  --parallel_requests 1024 \
+  --max_model_len 40960 \
+  --max_num_seqs 4096 \
+  --max_num_batched_tokens 524288 \
+  --gpu_memory_utilization 0.98 \
+  --temperature 0 \
+  --max_tokens 1 \
+  --top_logprobs 20 \
+  --cache_policy overwrite
+```
+
+评估结果会落到
+`experiments/runs/fever/example_run/eval_vllm/round_1/pool_student_predictions.jsonl`。
+如果中断，保留 `all_student_predictions.partial.jsonl` 后重跑同一命令，会跳过
+已经完成的样本。随后可用下一节的预测文件指标脚本统计 accuracy 和 F1。
+
 ## 评估：预测文件
 
 已落盘预测 JSONL 可以直接计算 accuracy、正类 F1、
