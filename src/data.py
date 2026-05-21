@@ -1,4 +1,10 @@
-"""query-document 二分类生成任务的数据加载。"""
+"""query-document 二分类任务的数据加载和 prompt 构造。
+
+这是外部数据接入的主入口。`load_examples` 读取统一 JSONL 格式
+`id/query/document/groundtruth`，检查字段、标签和 ID 唯一性；训练和推理数据集
+都复用这里的 prompt builder，保证 LoRA 训练、本地 PyTorch 推理和 vLLM raw
+completion 推理看到同一套 `1/0` 二分类协议。
+"""
 
 from __future__ import annotations
 
@@ -15,10 +21,9 @@ from .binary_protocol import BINARY_SYSTEM_PROMPT, binary_user_prompt, canonical
 
 T = TypeVar("T")
 
-# Qwen3 tokenizer_config uses this exact block when
-# `apply_chat_template(..., add_generation_prompt=True, enable_thinking=False)`.
-# Keep it in the shared prompt builder so LoRA training and vLLM raw
-# completions score the token after the no-thinking block, not `<think>`.
+# Qwen3 tokenizer_config 在 `enable_thinking=False` 时会插入这段空 thinking block。
+# 训练和 vLLM raw completion 必须共用同一个 prompt 结尾，才能让首个被打分
+# token 是分类答案 `1/0`，而不是 `<think>`。
 CGSD_EMPTY_THINKING_BLOCK = "<think>\n\n</think>\n\n"
 
 
@@ -310,6 +315,43 @@ def filter_examples_by_ids(
     sample_ids: set[str],
 ) -> list[PairExample]:
     return [example for example in examples if example.sample_id in sample_ids]
+
+
+def examples_to_rows(examples: list[PairExample]) -> list[dict[str, Any]]:
+    """Expose loaded examples as the canonical JSONL row format."""
+    rows: list[dict[str, Any]] = []
+    for example in examples:
+        row = dict(example.metadata)
+        row.update(
+            {
+                "id": example.sample_id,
+                "query": example.query,
+                "document": example.document,
+                "label": int(example.label),
+                "groundtruth": int(example.label),
+                "sample_weight": float(example.sample_weight),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def examples_from_rows(rows: list[dict[str, Any]]) -> list[PairExample]:
+    """Load canonical JSONL rows back into training examples."""
+    examples: list[PairExample] = []
+    for row in rows:
+        label = normalize_binary_label(row.get("label", row.get("groundtruth")), field_name="training row label")
+        examples.append(
+            PairExample(
+                sample_id=str(row["id"]),
+                query=str(row.get("query", "")),
+                document=str(row.get("document", "")),
+                label=label,
+                sample_weight=float(row.get("sample_weight", row.get("weight", 1.0)) or 1.0),
+                metadata=dict(row),
+            )
+        )
+    return examples
 
 
 class GenerationQueryDocumentDataset(Dataset):

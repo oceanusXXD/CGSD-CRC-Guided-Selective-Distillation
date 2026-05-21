@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-"""评估已保存的 LoRA checkpoint。
+"""用本地 PyTorch/HF 对 LoRA checkpoint 做 `1/0` 推理。
 
-该脚本直接加载 checkpoint 和 tokenizer，用 PyTorch DataLoader 计算
-accuracy/F1 等指标。若要评估已落盘的预测 JSONL，通常直接读取
-`*_student_predictions.jsonl` 统计即可。
+输入是训练后保存的 checkpoint、本地基座模型路径、统一 JSONL 数据，以及可选
+`cgsd_split_ids.json`。脚本可以跑 `all/guide/final/pool` 任一 split，输出
+逐样本预测 JSONL 和可选 metrics JSON。该入口适合小规模评估或不需要 vLLM
+server 的本地检查；基座 round0 大规模推理通常用 vLLM 入口。
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--predictions_path", default=None)
     parser.add_argument("--metrics_path", default=None)
     parser.add_argument("--split_ids_path", default=None)
-    parser.add_argument("--split_name", choices=["all", "train", "val", "test"], default="all")
+    parser.add_argument("--split_name", choices=["all", "guide", "final", "pool"], default="all")
     return parser.parse_args()
 
 
@@ -171,9 +172,14 @@ def main() -> None:
     )
     if args.split_name != "all":
         if split_ids_path is None:
-            split_ids_path = checkpoint_dir / "split_ids.json"
+            split_ids_path = checkpoint_dir / "cgsd_split_ids.json"
         split_data = read_json(split_ids_path)
-        split_ids = set(str(sample_id) for sample_id in split_data[f"{args.split_name}_ids"])
+        split_key = {
+            "guide": "guide_ids",
+            "final": "final_ids",
+            "pool": "pool_ids",
+        }[args.split_name]
+        split_ids = set(str(sample_id) for sample_id in split_data[split_key])
         examples = filter_examples_by_ids(examples, split_ids)
 
     device = get_device(args.device)

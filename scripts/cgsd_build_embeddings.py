@@ -1,5 +1,11 @@
 #!/usr/bin/env python
-"""为 JSONL 数据生成 CGSD query-document pair embedding。"""
+"""为统一 JSONL 数据生成 query-document embedding。
+
+输入是 `id/query/document/groundtruth` JSONL；输出是 `embeddings.npy`、
+`embeddings.ids.jsonl` 和 `embeddings.meta.json`。支持本地 Transformers
+后端和 vLLM pooling 后端，并支持通过 id sidecar 断点续跑。后续 split
+校验或需要向量空间的选择/分析只消费这些落盘工件。
+"""
 
 from __future__ import annotations
 

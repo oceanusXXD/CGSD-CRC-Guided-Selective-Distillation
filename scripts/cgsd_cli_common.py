@@ -1,4 +1,9 @@
-"""CGSD 独立 stage CLI 的共享工具。"""
+"""CGSD 各独立 CLI stage 的共享工具。
+
+本文件只放命令行入口之间共用的路径解析、cache 策略、JSONL 读写、
+teacher 标签读取和运行参数解析。它不是业务入口，也不应该承载训练、CRC
+或选样算法；这些逻辑分别放在 `src/trainer.py` 和 `src/crc.py`。
+"""
 
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.binary_protocol import normalize_binary_label  # noqa: E402
 from src.data import PairExample, filter_examples_by_ids, load_examples  # noqa: E402
-from src.utils import read_json, resolve_input_path, resolve_output_path, write_json  # noqa: E402
+from src.utils import read_json, read_jsonl as read_jsonl_file, resolve_input_path, resolve_output_path, write_json  # noqa: E402
 
 
 CACHE_POLICIES = ("reuse", "overwrite", "fail")
@@ -51,13 +56,7 @@ def binary_to_int(value: Any, *, field_name: str) -> int:
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     """读取一个 stage 边界上的 JSONL 文件。"""
-    source = Path(path)
-    rows: list[dict[str, Any]] = []
-    with source.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                rows.append(json.loads(line))
-    return rows
+    return read_jsonl_file(path)
 
 
 def output_dir_from_arg(value: str | Path) -> Path:
@@ -212,10 +211,10 @@ def split_examples(
     examples: list[PairExample],
     split_payload: dict[str, Any],
 ) -> tuple[list[PairExample], list[PairExample]]:
-    calibration_ids = {str(sample_id) for sample_id in split_payload["calibration_ids"]}
+    guide_ids = {str(sample_id) for sample_id in split_payload["guide_ids"]}
     pool_ids = {str(sample_id) for sample_id in split_payload["pool_ids"]}
     return (
-        filter_examples_by_ids(examples, calibration_ids),
+        filter_examples_by_ids(examples, guide_ids),
         filter_examples_by_ids(examples, pool_ids),
     )
 

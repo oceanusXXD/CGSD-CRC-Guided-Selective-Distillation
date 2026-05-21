@@ -1,4 +1,9 @@
-"""带 LoRA adapter 的 Qwen causal LM 封装。"""
+"""带 LoRA adapter 的 Qwen causal LM 封装。
+
+本模块负责加载本地 Qwen 基座模型、挂载/保存 LoRA adapter，并把训练 loss
+限制在答案 token `1/0` 上。训练脚本保存的 checkpoint 由这里统一恢复，避免
+训练、本地推理和 vLLM LoRA serving 使用不同的 adapter 配置。
+"""
 
 from __future__ import annotations
 

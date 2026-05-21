@@ -1,4 +1,9 @@
-"""二分类指标。"""
+"""二分类指标计算。
+
+输入是标签列表和连续分数列表，默认用 `score > 0` 得到 `1/0` 预测。
+输出 accuracy、precision、recall、positive F1、negative F1、macro F1
+等常用指标，供本地推理和 CRC 摘要复用。
+"""
 
 from __future__ import annotations
 

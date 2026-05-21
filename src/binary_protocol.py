@@ -1,4 +1,10 @@
-"""Shared binary classification protocol."""
+"""二分类协议的唯一来源。
+
+本模块集中定义本项目所有训练、推理、CRC 和评估共享的二分类约定：
+正类答案 token 固定为 `1`，负类答案 token 固定为 `0`，预测分数固定为
+`logit/logprob(1) - logit/logprob(0)`。其他模块不要重新定义标签别名或
+prompt 文本，避免训练和推理协议漂移。
+"""
 
 from __future__ import annotations
 

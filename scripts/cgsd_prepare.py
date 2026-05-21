@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""准备固定的 CGSD 数据划分。"""
+"""把统一 JSONL 数据切成 guide / final / pool 三个 ID 集。
+
+输入是标准数据 JSONL。输出是 `cgsd_split_ids.json`，里面只保留三组新字段：
+`guide_ids`、`final_ids`、`pool_ids`。如果同时传 `--embeddings_path`，脚本会在
+切分前校验 embedding 是否覆盖全量数据，方便后续 CRC 或选择阶段直接复用。
+"""
 
 from __future__ import annotations
 
@@ -22,12 +27,8 @@ from scripts.cgsd_cli_common import (
     stage_cache_decision,
     write_stage_usage,
 )
-from scripts.run_cgsd import (
-    assert_embedding_coverage,
-    examples_to_rows,
-    load_embeddings,
-)
-from src.data import load_examples
+from src.data import examples_to_rows, load_examples
+from src.embeddings import assert_embedding_coverage, load_embeddings
 from src.utils import resolve_input_path, set_seed, write_json
 
 
@@ -40,10 +41,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query_field", default="query")
     parser.add_argument("--document_field", default="document")
     parser.add_argument("--label_field", default="groundtruth")
-    parser.add_argument("--embeddings_path", required=True)
-    parser.add_argument("--embedding_dim", type=int, default=1024)
-    parser.add_argument("--n_calibration", type=int, default=1000)
-    parser.add_argument("--n_final_calibration", type=int, default=0)
+    parser.add_argument("--embeddings_path", default=None)
+    parser.add_argument("--embedding_dim", type=int, default=0)
+    parser.add_argument("--n_guide", type=int, default=None)
+    parser.add_argument("--n_final", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     add_stage_cache_args(parser)
     return parser.parse_args()
@@ -69,7 +70,6 @@ def main() -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     data_path = resolve_input_path(args.data_path, PROJECT_ROOT)
-    embeddings_path = resolve_input_path(args.embeddings_path, PROJECT_ROOT)
 
     examples = load_examples(
         data_path,
@@ -78,55 +78,58 @@ def main() -> None:
         label_field=args.label_field,
     )
     rows = examples_to_rows(examples)
-    if int(args.n_calibration) <= 0:
-        raise ValueError("--n_calibration must be positive")
-    if int(args.n_final_calibration) < 0:
-        raise ValueError("--n_final_calibration must be non-negative")
-    if int(args.n_calibration) + int(args.n_final_calibration) >= len(rows):
-        raise ValueError("--n_calibration + --n_final_calibration must be smaller than the dataset size")
+    n_guide = 1000 if args.n_guide is None else int(args.n_guide)
+    n_final = 0 if args.n_final is None else int(args.n_final)
+    if n_guide <= 0:
+        raise ValueError("--n_guide must be positive")
+    if n_final < 0:
+        raise ValueError("--n_final must be non-negative")
+    if n_guide + n_final >= len(rows):
+        raise ValueError("--n_guide + --n_final must be smaller than the dataset size")
     all_ids = [str(row["id"]) for row in rows]
     rng = random.Random(int(args.seed))
     rng.shuffle(all_ids)
-    calibration_ids = all_ids[: int(args.n_calibration)]
-    final_calibration_ids = all_ids[
-        int(args.n_calibration) : int(args.n_calibration) + int(args.n_final_calibration)
-    ]
-    pool_ids = all_ids[int(args.n_calibration) + int(args.n_final_calibration) :]
-    embeddings_by_id = load_embeddings(embeddings_path)
-    assert_embedding_coverage(embeddings_by_id, rows, expected_dim=args.embedding_dim)
+    guide_ids = all_ids[:n_guide]
+    final_ids = all_ids[n_guide : n_guide + n_final]
+    pool_ids = all_ids[n_guide + n_final :]
+    embedding_usage = None
+    if args.embeddings_path:
+        embeddings_path = resolve_input_path(args.embeddings_path, PROJECT_ROOT)
+        embeddings_by_id = load_embeddings(embeddings_path)
+        assert_embedding_coverage(embeddings_by_id, rows, expected_dim=int(args.embedding_dim))
+        embedding_usage = embedding_usage_payload(
+            embedding_source=embeddings_path,
+            row_count=len(rows),
+            embedding_dim=int(args.embedding_dim),
+            purpose="prepare_validate_full_embedding_coverage",
+        )
 
     split_payload = {
-        "calibration_ids": calibration_ids,
+        "guide_ids": guide_ids,
+        "final_ids": final_ids,
         "pool_ids": pool_ids,
-        "final_calibration_ids": final_calibration_ids,
-        "n_calibration": args.n_calibration,
-        "n_final_calibration": args.n_final_calibration,
+        "n_guide": n_guide,
+        "n_final": n_final,
         "seed": args.seed,
-        "split_algorithm": "fixed_random_calibration_final_calibration_pool_v1",
+        "split_algorithm": "fixed_random_guide_final_pool_v1",
     }
     write_json(split_payload, split_ids_path)
-    write_stage_usage(
-        usage_path,
-        {
-            "stage_name": "cgsd_prepare",
-            "cache": cache_decision.to_dict(),
-            "data_path": str(data_path),
-            "split_ids_path": str(split_ids_path),
-            "data_rows": len(rows),
-            "calibration_size": len(calibration_ids),
-            "final_calibration_size": len(final_calibration_ids),
-            "pool_size": len(pool_ids),
-            "embedding": embedding_usage_payload(
-                embedding_source=embeddings_path,
-                row_count=len(rows),
-                embedding_dim=int(args.embedding_dim),
-                purpose="prepare_validate_full_embedding_coverage",
-            ),
-            "student_model_calls": 0,
-            "teacher_calls": 0,
-            "groundtruth_substitute_calls": 0,
-        },
-    )
+    usage_payload = {
+        "stage_name": "cgsd_prepare",
+        "cache": cache_decision.to_dict(),
+        "data_path": str(data_path),
+        "split_ids_path": str(split_ids_path),
+        "data_rows": len(rows),
+        "guide_size": len(guide_ids),
+        "final_size": len(final_ids),
+        "pool_size": len(pool_ids),
+        "student_model_calls": 0,
+        "teacher_calls": 0,
+        "groundtruth_substitute_calls": 0,
+    }
+    if embedding_usage is not None:
+        usage_payload["embedding"] = embedding_usage
+    write_stage_usage(usage_path, usage_payload)
     print(json.dumps({"prepared": True, "output_dir": str(output_dir)}, ensure_ascii=False, sort_keys=True))
 
 

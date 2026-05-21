@@ -1,4 +1,8 @@
-"""训练、预测和评估共用工具。"""
+"""训练、预测和评估共用工具。
+
+这里放多个脚本都会用到的基础能力：随机种子、设备选择、JSON/JSONL 读写、
+torch dtype 解析、batch 搬运和输出目录解析。不要把业务流程放到这里。
+"""
 
 from __future__ import annotations
 
@@ -84,6 +88,15 @@ def move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[st
 def read_json(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
 
 
 def write_json(data: dict[str, Any], path: str | Path) -> None:

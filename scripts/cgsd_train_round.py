@@ -1,8 +1,10 @@
 #!/usr/bin/env python
-"""用累计选中样本训练单个 CGSD LoRA round。
+"""用选出的训练样本训练单个 LoRA round。
 
-训练输入是累计的 `cgsd_train_rows.jsonl`，而不是仅本轮新增样本。
-round 0 表示未训练基座模型，因此本脚本只允许训练 round >= 1。
+输入是 `cgsd_train_rows.jsonl` 或显式 `--train_rows_path`，每行必须是统一
+`id/query/document/label|groundtruth` 格式。脚本从基座模型加载 Qwen，
+只训练 LoRA adapter，并把 checkpoint 写到 `round_<n>/model/`。round 0
+表示未训练基座模型，所以本脚本只允许训练 round >= 1。
 """
 
 from __future__ import annotations
@@ -11,7 +13,9 @@ import argparse
 import json
 import math
 import sys
+from collections import Counter
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -34,13 +38,22 @@ from scripts.cgsd_cli_common import (
     train_label_snapshot,
     write_stage_usage,
 )
-from scripts.run_cgsd import examples_from_rows, train_round_model
-from src.data import filter_examples_by_ids
+from src.binary_protocol import BINARY_NEGATIVE_TEXT, BINARY_POSITIVE_TEXT
+from src.data import (
+    GenerationPairCollator,
+    GenerationQueryDocumentDataset,
+    PairExample,
+    examples_from_rows,
+    filter_examples_by_ids,
+)
+from src.model import QwenGenerativeModel
+from src.trainer import fit
 from src.utils import (
     configure_torch_performance,
     disable_tokenizer_thinking,
     ensure_tokenizer_padding,
     get_device,
+    parse_torch_dtype,
     read_json,
     set_seed,
     write_json,
@@ -49,10 +62,160 @@ from src.utils import (
 from transformers import AutoTokenizer
 
 
+def count_labels(examples: list[PairExample]) -> dict[int, int]:
+    return dict(sorted(Counter(example.label for example in examples).items()))
+
+
+def compute_balanced_class_weights(examples: list[PairExample]) -> dict[int, float]:
+    label_counts = Counter(example.label for example in examples)
+    total = sum(label_counts.values())
+    if total == 0:
+        return {}
+    return {label: total / max(2.0 * label_counts.get(label, 0), 1.0) for label in (0, 1)}
+
+
+def get_single_token_id(tokenizer: Any, text: str) -> int:
+    token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+    if len(token_ids) != 1:
+        raise ValueError(f"Expected {text!r} to encode to one token, got {token_ids}")
+    return int(token_ids[0])
+
+
+def build_class_token_weights(tokenizer: Any, class_weights: dict[int, float]) -> dict[int, float]:
+    label_tokens = {0: BINARY_NEGATIVE_TEXT, 1: BINARY_POSITIVE_TEXT}
+    return {get_single_token_id(tokenizer, label_tokens[int(label)]): weight for label, weight in class_weights.items()}
+
+
+def build_train_dataloader(
+    examples: list[PairExample],
+    tokenizer: Any,
+    *,
+    max_length: int,
+    batch_size: int,
+    shuffle: bool,
+    num_workers: int,
+    prefetch_factor: int,
+    pin_memory: bool,
+    pad_to_multiple_of: int,
+    cache_tokenization: bool,
+) -> Any:
+    from torch.utils.data import DataLoader
+
+    dataset = GenerationQueryDocumentDataset(
+        examples,
+        tokenizer=tokenizer,
+        max_length=max_length,
+        cache_tokenization=cache_tokenization,
+        input_format="cgsd_chat_binary_v1",
+    )
+    kwargs: dict[str, Any] = {
+        "dataset": dataset,
+        "batch_size": batch_size,
+        "shuffle": shuffle,
+        "collate_fn": GenerationPairCollator(
+            tokenizer,
+            pad_to_multiple_of=pad_to_multiple_of if pad_to_multiple_of > 0 else None,
+        ),
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = True
+        kwargs["prefetch_factor"] = prefetch_factor
+    return DataLoader(**kwargs)
+
+
+def train_round_model(
+    *,
+    train_examples: list[PairExample],
+    eval_examples: list[PairExample],
+    tokenizer: Any,
+    model_path: Path,
+    init_adapter_path: Path | None,
+    output_dir: Path,
+    device: Any,
+    args: Any,
+    round_index: int,
+    run_config: dict[str, Any],
+) -> QwenGenerativeModel:
+    train_loader = build_train_dataloader(
+        train_examples,
+        tokenizer,
+        max_length=args.max_length,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        pin_memory=args.pin_memory and device.type == "cuda",
+        pad_to_multiple_of=args.pad_to_multiple_of,
+        cache_tokenization=args.cache_tokenization,
+    )
+    model = QwenGenerativeModel(
+        model_path=str(model_path),
+        mode="lora_attention_mlp",
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        lora_target_modules=args.lora_target_modules,
+        lora_layer_scope=args.lora_layer_scope,
+        adapter_path=init_adapter_path,
+        adapters_trainable=True,
+        torch_dtype=parse_torch_dtype(args.torch_dtype),
+        trust_remote_code=args.trust_remote_code,
+    )
+    class_weights = compute_balanced_class_weights(train_examples) if args.balance_train_classes else {}
+    class_token_weights = build_class_token_weights(tokenizer, class_weights) if class_weights else {}
+    round_config = dict(run_config)
+    round_config.update(
+        {
+            "round_index": int(round_index),
+            "train_size": len(train_examples),
+            "eval_size": 0,
+            "guide_size_held_out": len(eval_examples),
+            "guide_used_for_training_or_model_selection": False,
+            "train_label_counts": count_labels(train_examples),
+            "class_weights": class_weights,
+            "class_token_weights": class_token_weights,
+        }
+    )
+    fit(
+        model=model,
+        train_loader=train_loader,
+        eval_loader=None,
+        tokenizer=tokenizer,
+        output_dir=output_dir,
+        device=device,
+        epochs=args.epochs,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        max_grad_norm=args.max_grad_norm,
+        warmup_ratio=args.warmup_ratio,
+        threshold=args.threshold,
+        run_config=round_config,
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_min_delta=args.early_stopping_min_delta,
+        class_token_weights=class_token_weights if args.balance_train_classes else None,
+        scheduler_type="cosine",
+    )
+    model.to("cpu")
+    if device.type == "cuda":
+        import torch
+
+        torch.cuda.empty_cache()
+    trained_model = QwenGenerativeModel.load_from_checkpoint(
+        output_dir,
+        torch_dtype=parse_torch_dtype(args.torch_dtype),
+        model_path=model_path,
+    )
+    trained_model.to(device)
+    return trained_model
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--round_index", type=int, required=True, help="要产出的 LoRA round，例如 select round0 后训练 round1")
+    parser.add_argument("--round_index", type=int, required=True, help="要产出的 LoRA round，例如用选出的训练集训练 round1")
     parser.add_argument("--model_path", default="model/qwen3-0.6b")
     parser.add_argument("--data_path", default="datasets")
     parser.add_argument("--query_field", default="query")
@@ -114,10 +277,9 @@ def main() -> None:
     runtime_args = runtime_args_from_cli(args)
     set_seed(int(runtime_args.seed))
     configure_torch_performance(enable_tf32=runtime_args.tf32)
-    # 这里读取累计训练集：第一轮 250，后续轮会包含之前轮次已选样本。
     selected_rows = read_jsonl(train_rows_path) if args.train_rows_path else load_selected_train_rows(output_dir)
     if not selected_rows:
-        raise RuntimeError(f"{train_rows_path} is empty; run cgsd_select.py first or pass --train_rows_path")
+        raise RuntimeError(f"{train_rows_path} is empty; pass --train_rows_path with canonical training JSONL rows")
     training_rows_snapshot = [
         {
             **dict(row),
@@ -146,14 +308,14 @@ def main() -> None:
         label_field=args.label_field,
     )
     split_payload = read_json(input_artifact_path(args.split_ids_path, output_dir / "cgsd_split_ids.json"))
-    calibration_ids = set(split_payload["calibration_ids"])
-    calibration_examples = filter_examples_by_ids(all_examples, calibration_ids)
+    guide_ids = {str(sample_id) for sample_id in split_payload["guide_ids"]}
+    guide_examples = filter_examples_by_ids(all_examples, guide_ids)
     device = get_device(args.device)
     run_config = vars(args)
     run_config["seed"] = int(runtime_args.seed)
     model = train_round_model(
         train_examples=train_examples,
-        eval_examples=calibration_examples,
+        eval_examples=guide_examples,
         tokenizer=tokenizer,
         model_path=model_path,
         init_adapter_path=init_adapter_path,

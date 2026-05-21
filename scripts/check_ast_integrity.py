@@ -162,7 +162,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "paths",
         nargs="*",
-        default=["algorithms", "src", "scripts", "experiments/bin"],
+        default=["src", "scripts"],
         help="要检查的文件或目录，默认检查核心 Python 代码目录。",
     )
     return parser.parse_args()

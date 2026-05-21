@@ -1,13 +1,11 @@
 #!/usr/bin/env python
-"""通过 vLLM OpenAI-compatible server 执行 CGSD student 预测。
+"""通过 vLLM OpenAI-compatible server 执行 CGSD 推理。
 
-该脚本负责高吞吐全量推理：对 D_guide、D_cert 和 pool 中的每个样本
-构造 query-document prompt，只生成 1 个 token，并读取首 token 位置
-`1` 与 `0` 的 logprob。保存的 `score = one_lp - zero_lp` 是后续
-CRC 路由分数 `sigmoid(abs(score)/T)` 的原始 margin。
-
-vLLM 被放在独立 server 进程中，避免主预测进程直接 import vLLM CUDA
-扩展；`--start_server` 启动的 server 会在脚本结束时清理。
+输入是统一 JSONL、`cgsd_split_ids.json`、可选 LoRA checkpoint，以及一组
+vLLM serving 参数。脚本会对 guide、final 和 pool 三个 split 一次性做 raw
+completion 推理，只生成 1 个 token，并读取 `1/0` 的 logprob margin。
+输出包括全量预测 `all_student_predictions.jsonl` 和三个 split 对应的预测文件，
+可直接供 CRC 校准、选样和最终评估使用。
 """
 
 from __future__ import annotations
@@ -41,7 +39,6 @@ from scripts.cgsd_cli_common import (
     output_dir_from_arg,
     print_existing_stage_result,
     read_jsonl,
-    runtime_args_from_cli,
     split_examples,
     stage_cache_decision,
     summarize_teacher_label_usage,
@@ -72,8 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher_labels_path", default=None)
     parser.add_argument("--teacher_temperature", type=float, default=1.0)
     parser.add_argument("--all_predictions_path", default=None)
-    parser.add_argument("--calibration_predictions_path", default=None)
-    parser.add_argument("--final_calibration_predictions_path", default=None)
+    parser.add_argument("--guide_predictions_path", default=None)
+    parser.add_argument("--final_predictions_path", default=None)
     parser.add_argument("--pool_predictions_path", default=None)
     parser.add_argument("--train_label_snapshot_path", default=None)
     parser.add_argument("--usage_path", default=None)
@@ -688,13 +685,13 @@ def main() -> None:
     output_dir = output_dir_from_arg(args.output_dir)
     round_dir = output_dir / f"round_{args.round_index}"
     all_predictions_path = output_artifact_path(args.all_predictions_path, round_dir / "all_student_predictions.jsonl")
-    calibration_predictions_path = output_artifact_path(
-        args.calibration_predictions_path,
-        round_dir / "calibration_student_predictions.jsonl",
+    guide_predictions_path = output_artifact_path(
+        args.guide_predictions_path,
+        round_dir / "guide_student_predictions.jsonl",
     )
-    final_calibration_predictions_path = output_artifact_path(
-        args.final_calibration_predictions_path,
-        round_dir / "final_calibration_student_predictions.jsonl",
+    final_predictions_path = output_artifact_path(
+        args.final_predictions_path,
+        round_dir / "final_student_predictions.jsonl",
     )
     pool_predictions_path = output_artifact_path(args.pool_predictions_path, round_dir / "pool_student_predictions.jsonl")
     partial_predictions_path = output_artifact_path(
@@ -711,8 +708,8 @@ def main() -> None:
         return
     required_outputs = [
         all_predictions_path,
-        calibration_predictions_path,
-        final_calibration_predictions_path,
+        guide_predictions_path,
+        final_predictions_path,
         pool_predictions_path,
         train_label_snapshot_path,
         usage_path,
@@ -772,11 +769,11 @@ def main() -> None:
             document_field=args.document_field,
             label_field=args.label_field,
         )
-        calibration_examples, pool_examples = split_examples(examples, split_payload)
+        guide_examples, pool_examples = split_examples(examples, split_payload)
         examples_by_id = {str(example.sample_id): example for example in examples}
-        final_calibration_ids = [str(sample_id) for sample_id in split_payload.get("final_calibration_ids", [])]
-        final_calibration_examples = [examples_by_id[sample_id] for sample_id in final_calibration_ids]
-        prediction_examples = calibration_examples + final_calibration_examples + pool_examples
+        final_ids = [str(sample_id) for sample_id in split_payload["final_ids"]]
+        final_examples = [examples_by_id[sample_id] for sample_id in final_ids]
+        prediction_examples = guide_examples + final_examples + pool_examples
 
         teacher_labels_by_id = (
             load_teacher_labels(args.teacher_labels_path, teacher_temperature=float(args.teacher_temperature))
@@ -802,11 +799,12 @@ def main() -> None:
             _apply_teacher_label(row, teacher_labels_by_id)
         write_jsonl(predictions, all_predictions_path)
         by_id = {str(row["id"]): row for row in predictions}
-        calibration_predictions = [by_id[str(sample_id)] for sample_id in split_payload["calibration_ids"]]
-        final_calibration_predictions = [by_id[str(sample_id)] for sample_id in final_calibration_ids]
+        guide_ids = split_payload["guide_ids"]
+        guide_predictions = [by_id[str(sample_id)] for sample_id in guide_ids]
+        final_predictions = [by_id[str(sample_id)] for sample_id in final_ids]
         pool_predictions = [by_id[str(sample_id)] for sample_id in split_payload["pool_ids"]]
-        write_jsonl(calibration_predictions, calibration_predictions_path)
-        write_jsonl(final_calibration_predictions, final_calibration_predictions_path)
+        write_jsonl(guide_predictions, guide_predictions_path)
+        write_jsonl(final_predictions, final_predictions_path)
         write_jsonl(pool_predictions, pool_predictions_path)
 
         teacher_usage = summarize_teacher_label_usage(predictions, purpose="predict_teacher_label_attachment")
@@ -828,8 +826,8 @@ def main() -> None:
                 "groundtruth_substitute_calls": teacher_usage["groundtruth_substitute_calls"],
                 "teacher_api_file_calls": teacher_usage["teacher_api_file_calls"],
                 "all_predictions_path": str(all_predictions_path),
-                "calibration_predictions_path": str(calibration_predictions_path),
-                "final_calibration_predictions_path": str(final_calibration_predictions_path),
+                "guide_predictions_path": str(guide_predictions_path),
+                "final_predictions_path": str(final_predictions_path),
                 "pool_predictions_path": str(pool_predictions_path),
             },
         )
