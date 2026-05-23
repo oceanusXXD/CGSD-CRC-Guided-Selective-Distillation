@@ -1,0 +1,10 @@
+train_n,method,mean_acc_pct,mean_macro_f1_pct,num_tasks
+50,crc-error-mass,72.774,58.4644,4
+50,crc-random delta,-6.298,-2.6453,4
+50,random,79.072,61.1097,4
+125,crc-error-mass,82.4841,63.063,4
+125,crc-random delta,2.007,4.1336,4
+125,random,80.4771,58.9294,4
+250,crc-error-mass,84.3117,69.8979,4
+250,crc-random delta,0.0469,-1.3268,4
+250,random,84.2648,71.2247,4

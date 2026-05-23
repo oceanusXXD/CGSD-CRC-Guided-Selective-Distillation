@@ -1,0 +1,5 @@
+dataset,model,setting,train_n,method,num_seeds,mean_acc_pct,sd_acc_pct,mean_macro_f1_pct,sd_macro_f1_pct,delta_acc_vs_random_pp,delta_macro_f1_vs_random_pp,source,note
+fever,Qwen3-1.7B,eight_cell_near_balanced_unique_10000_seed1,3000,random,2,79.585,0.585,79.0767,0.5251,0.0,0.0,random_vs_crc overall_metrics.csv,两个 selection seed
+fever,Qwen3-1.7B,eight_cell_near_balanced_unique_10000_seed1,3000,crc_error_mass,2,80.725,0.385,80.3363,0.4161,1.14,1.2596,overall_metrics.csv；NS 方法共用同一 FEVER 测试集，random 基线来自 random_vs_crc CSV,两个 selection seed
+fever,Qwen3-1.7B,eight_cell_near_balanced_unique_10000_seed1,3000,ns_difficulty_global,2,80.345,0.345,79.8765,0.3805,0.76,0.7998,overall_metrics.csv；NS 方法共用同一 FEVER 测试集，random 基线来自 random_vs_crc CSV,两个 selection seed
+fever,Qwen3-1.7B,eight_cell_near_balanced_unique_10000_seed1,3000,ns_difficulty_crc_split,2,80.025,0.405,79.5914,0.3485,0.44,0.5147,overall_metrics.csv；NS 方法共用同一 FEVER 测试集，random 基线来自 random_vs_crc CSV,使用 CSV 数值；旧文字摘要高估了 ns_difficulty_crc_split，CSV 均值为 79.59 macro-F1。

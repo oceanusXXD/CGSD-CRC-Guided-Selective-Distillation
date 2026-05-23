@@ -1,0 +1,9 @@
+dataset,query_id,setting,model,train_n,method,test_n,acc_pct,macro_f1_pct,positive_f1_pct,balanced_acc_pct,accept_count,defer_count,defer_rate_pct,accept_error_rate_pct,source
+codebase,1,balanced50_common_test,Qwen3-0.6B,500,crc-error-mass,8124,96.2211,80.1248,62.2386,77.8519,7744,380,4.6775,2.1694,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json
+codebase,1,balanced50_common_test,Qwen3-0.6B,500,ns-error-mass,8124,96.3319,83.9122,69.7769,87.6123,7948,176,2.1664,3.1203,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json
+codebase,2,balanced50_common_test,Qwen3-0.6B,500,crc-error-mass,8125,87.0523,86.1803,89.6518,86.1054,6984,1141,14.0431,9.1781,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json
+codebase,2,balanced50_common_test,Qwen3-0.6B,500,ns-error-mass,8125,84.6154,83.7105,87.5498,83.9182,6858,1267,15.5938,10.6445,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json
+codebase,3,balanced50_common_test,Qwen3-0.6B,500,crc-error-mass,8133,81.7165,76.9448,66.4561,78.6725,6367,1766,21.714,17.3865,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json
+codebase,3,balanced50_common_test,Qwen3-0.6B,500,ns-error-mass,8133,81.1755,76.8425,66.8256,79.4472,5945,2188,26.9027,14.5332,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json
+twitter_hate,1,balanced50_common_test,Qwen3-0.6B,1000,crc-error-mass,22329,91.6208,85.8658,94.8848,89.9553,22050,279,1.2495,8.1905,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json
+twitter_hate,1,balanced50_common_test,Qwen3-0.6B,1000,ns-error-mass,22329,91.8939,85.6859,95.1126,87.8546,21714,615,2.7543,7.4837,experiments/runs/codebase_twitterhate_balanced50_lora/vllm_common_test_T10_summary.json

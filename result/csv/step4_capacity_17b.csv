@@ -1,0 +1,5 @@
+method,seeds,base_pred_yes_pct,train_counter_bias_no_pct,train_yes_pct,accept_pct,defer_pct,acc_pct,macro_f1_pct,delta_macro_f1_vs_random,interpretation
+random,2,58.94,47.87,52.13,94.77,5.23,79.58,79.08,0.0,随机基线
+crc-error-mass,2,58.94,55.2,44.8,59.37,40.63,80.72,80.34,1.26,容量较足时有小幅收益
+ns-difficulty-global,2,58.94,32.02,67.98,95.1,4.9,80.34,79.88,0.8,容量较足时有小幅收益
+ns-difficulty-crc-split,2,58.94,55.15,44.85,60.7,39.3,80.03,79.59,0.51,容量较足时有小幅收益
