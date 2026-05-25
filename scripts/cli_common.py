@@ -1,10 +1,3 @@
-"""CGSD 各独立 CLI stage 的共享工具。
-
-本文件只放命令行入口之间共用的路径解析、cache 策略、JSONL 读写、
-teacher 标签读取和运行参数解析。它不是业务入口，也不应该承载训练、CRC
-或选样算法；这些逻辑分别放在 `src/trainer.py` 和 `src/crc.py`。
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -29,8 +22,6 @@ CACHE_POLICIES = ("reuse", "overwrite", "fail")
 
 @dataclass(frozen=True)
 class StageCacheDecision:
-    """独立 stage 写文件前的缓存判定结果。"""
-
     stage_name: str
     cache_policy: str
     cache_hit: bool
@@ -50,12 +41,10 @@ class StageCacheDecision:
 
 
 def binary_to_int(value: Any, *, field_name: str) -> int:
-    """把规范 1/0 统一成整数 1/0。"""
     return normalize_binary_label(value, field_name=field_name)
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    """读取一个 stage 边界上的 JSONL 文件。"""
     return read_jsonl_file(path)
 
 
@@ -64,12 +53,10 @@ def output_dir_from_arg(value: str | Path) -> Path:
 
 
 def input_artifact_path(value: str | Path | None, default: Path) -> Path:
-    """解析独立 stage 的输入 artifact 路径。"""
     return resolve_input_path(value, PROJECT_ROOT) if value is not None else default
 
 
 def output_artifact_path(value: str | Path | None, default: Path) -> Path:
-    """解析独立 stage 的输出 artifact 路径。"""
     return resolve_output_path(value, PROJECT_ROOT) if value is not None else default
 
 
@@ -79,11 +66,6 @@ def stage_cache_decision(
     required_outputs: Iterable[str | Path],
     cache_policy: str,
 ) -> StageCacheDecision:
-    """判断独立 stage 应该运行还是复用已有完整输出。
-
-    `reuse` 必须严格：输出全在才复用，输出全无才运行，只有一部分输出
-    存在就报错。这样被中断的 stage 不会把旧产物和新产物静默混在一起。
-    """
     policy = str(cache_policy)
     if policy not in CACHE_POLICIES:
         raise ValueError(f"cache_policy must be one of {CACHE_POLICIES}, got {cache_policy!r}")
@@ -127,7 +109,6 @@ def print_existing_stage_result(*, stage_name: str, summary_path: str | Path | N
 
 
 def estimate_text_tokens(text: str) -> int:
-    """为 usage 账本提供确定性的低成本 token 估算。"""
     stripped = str(text or "").strip()
     if not stripped:
         return 0
@@ -187,8 +168,12 @@ def write_stage_usage(path: str | Path, payload: dict[str, Any]) -> None:
     write_json(payload, path)
 
 
+def split_ids_path(output_dir: str | Path) -> Path:
+    return output_dir_from_arg(output_dir) / "split_ids.json"
+
+
 def load_split_ids(output_dir: str | Path) -> dict[str, Any]:
-    return read_json(output_dir_from_arg(output_dir) / "cgsd_split_ids.json")
+    return read_json(split_ids_path(output_dir))
 
 
 def load_stage_examples(
@@ -198,7 +183,6 @@ def load_stage_examples(
     document_field: str,
     label_field: str,
 ) -> list[PairExample]:
-    """按 CLI 参数加载当前 stage 需要的样本。"""
     return load_examples(
         resolve_input_path(data_path, PROJECT_ROOT),
         query_field=str(query_field),
@@ -220,7 +204,7 @@ def split_examples(
 
 
 def selected_train_rows_path(output_dir: str | Path) -> Path:
-    return output_dir_from_arg(output_dir) / "cgsd_train_rows.jsonl"
+    return output_dir_from_arg(output_dir) / "train_rows.jsonl"
 
 
 def load_selected_train_rows(output_dir: str | Path) -> list[dict[str, Any]]:
@@ -245,7 +229,6 @@ def _first_present(row: dict[str, Any], field_names: Iterable[Any]) -> Any:
 
 
 def _teacher_logit_margin(row: dict[str, Any]) -> float | None:
-    """从常见 API 输出结构里提取 1-vs-0 teacher logit margin。"""
     value = _first_present(
         row,
         (
@@ -268,7 +251,6 @@ def _teacher_logit_margin(row: dict[str, Any]) -> float | None:
 
 
 def _confidence_from_logit_margin(margin: float, temperature: float) -> float:
-    """按 sigmoid(abs(margin)/T) 把 teacher logit margin 转成置信度。"""
     temp = float(temperature)
     if not math.isfinite(temp) or temp <= 0.0:
         raise ValueError("teacher_temperature must be a positive finite number")
@@ -375,13 +357,6 @@ def _iter_teacher_json_rows(path: Path) -> Iterable[dict[str, Any]]:
 
 
 def load_teacher_labels(path: str | Path, *, teacher_temperature: float = 1.0) -> dict[str, dict[str, Any]]:
-    """从 JSON/JSONL 读取真实 teacher API 输出。
-
-    真实 API 可以输出 `teacher_label`，也可以只输出 1/0 logit margin；
-    后者会用 margin 的符号得到标签，并用 sigmoid(abs(margin)/T) 得到
-    teacher confidence。没有传这个文件时，预测阶段会用 groundtruth 代替
-    真实 teacher API，并把 teacher confidence 固定为 1.0。
-    """
     source = resolve_input_path(path, PROJECT_ROOT)
     if not source.exists():
         raise FileNotFoundError(f"teacher_labels_path does not exist: {source}")
@@ -400,7 +375,6 @@ def load_teacher_labels(path: str | Path, *, teacher_temperature: float = 1.0) -
 
 
 def apply_teacher_label(row: dict[str, Any], teacher_labels_by_id: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
-    """给单条预测结果附加 CRC、选样和训练使用的 teacher 标签。"""
     sample_id = str(row.get("id", row.get("sample_id", "")))
     teacher_payload = (teacher_labels_by_id or {}).get(sample_id)
     if teacher_payload is not None:
@@ -416,8 +390,7 @@ def apply_teacher_label(row: dict[str, Any], teacher_labels_by_id: dict[str, dic
             row["teacher_logit_margin"] = float(teacher_payload["teacher_logit_margin"])
         return row
 
-    # 离线实验没有真实 teacher API 输出时，用数据集 groundtruth 代替真实 API。
-    # 这是实验替代，不是部署逻辑；因此 teacher_confidence 明确记为 1.0。
+    # Offline experiments may substitute dataset labels for teacher API output.
     label = binary_to_int(row.get("groundtruth", row.get("label")), field_name="groundtruth teacher substitute")
     row["label"] = label
     row["groundtruth"] = label
@@ -450,7 +423,6 @@ def _ids_from_json_payload(payload: Any) -> list[str]:
 
 
 def load_anchor_ids(path: str | Path) -> list[str]:
-    """从 JSON、JSONL 或一行一个 ID 的文本读取可复用 anchor 候选集。"""
     source = resolve_input_path(path, PROJECT_ROOT)
     if not source.exists():
         raise FileNotFoundError(f"anchor_ids_path does not exist: {source}")
@@ -472,7 +444,6 @@ def load_anchor_ids(path: str | Path) -> list[str]:
 
 
 def runtime_args_from_cli(cli_args: argparse.Namespace) -> argparse.Namespace:
-    """从 CLI 参数构造模型推理和训练需要的运行参数。"""
     def value(name: str, default: Any = None) -> Any:
         override = getattr(cli_args, name, None)
         return default if override is None else override
@@ -509,7 +480,6 @@ def runtime_args_from_cli(cli_args: argparse.Namespace) -> argparse.Namespace:
 
 
 def add_runtime_overrides(parser: argparse.ArgumentParser) -> None:
-    """给需要模型运行的 stage 添加通用可选覆盖参数。"""
     parser.add_argument("--device", default="auto")
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--max_length", type=int, default=None)

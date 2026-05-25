@@ -1,7 +1,9 @@
-"""训练、预测和评估共用工具。
+"""Shared utilities for training, prediction, and evaluation.
 
-这里放多个脚本都会用到的基础能力：随机种子、设备选择、JSON/JSONL 读写、
-torch dtype 解析、batch 搬运和输出目录解析。不要把业务流程放到这里。
+This module contains basic functionality reused across scripts: random seeding,
+device selection, JSON/JSONL I/O, torch dtype parsing, batch device transfer,
+and output-directory resolution. Business workflow logic should live in the
+stage-specific modules instead.
 """
 
 from __future__ import annotations
@@ -65,11 +67,11 @@ def ensure_tokenizer_padding(tokenizer: Any) -> None:
 
 
 def disable_tokenizer_thinking(tokenizer: Any) -> None:
-    """移除 checkpoint tokenizer 中可能遗留的 thinking chat template。
+    """Remove a thinking chat template that may remain in a checkpoint tokenizer.
 
-    本项目推理时直接构造 query-document prompt，不依赖 tokenizer 的 chat
-    template。清掉模板可以避免复用 checkpoint tokenizer 时意外打开 Qwen3
-    thinking mode。
+    Inference constructs the query-document prompt directly and does not depend
+    on the tokenizer chat template. Clearing the template avoids accidentally
+    enabling thinking mode when a checkpoint tokenizer is reused.
     """
     if hasattr(tokenizer, "chat_template"):
         tokenizer.chat_template = None

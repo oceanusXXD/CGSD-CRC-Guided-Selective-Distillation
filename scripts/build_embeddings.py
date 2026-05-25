@@ -1,11 +1,4 @@
 #!/usr/bin/env python
-"""为统一 JSONL 数据生成 query-document embedding。
-
-输入是 `id/query/document/groundtruth` JSONL；输出是 `embeddings.npy`、
-`embeddings.ids.jsonl` 和 `embeddings.meta.json`。支持本地 Transformers
-后端和 vLLM pooling 后端，并支持通过 id sidecar 断点续跑。后续 split
-校验或需要向量空间的选择/分析只消费这些落盘工件。
-"""
 
 from __future__ import annotations
 
@@ -25,17 +18,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-CASCADE_ROOT = PROJECT_ROOT.parent / "Cascade"
-if str(CASCADE_ROOT) not in sys.path:
-    sys.path.insert(0, str(CASCADE_ROOT))
-
-from cascade.utils.embeddings import chunk_text_for_embedding, mean_pool_vectors  # noqa: E402
-from script.pair_text import format_pair_embedding_text  # noqa: E402
-from script.vector import normalize_vectors  # noqa: E402
+from src.embedding_text import (  # noqa: E402
+    chunk_text_for_embedding,
+    format_pair_embedding_text,
+    mean_pool_vectors,
+    normalize_vectors,
+)
 from src.utils import resolve_input_path, resolve_output_path, write_json  # noqa: E402
 
 
-DEFAULT_EMBEDDING_MODEL = "/teamspace/studios/this_studio/model/qwen3-4b-embedding"
+DEFAULT_EMBEDDING_MODEL = "model/embedding-model"
 
 
 def parse_args() -> argparse.Namespace:
@@ -98,7 +90,6 @@ def resolve_vllm_dtype(dtype_name: str) -> str:
 
 
 def last_token_pool(hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    """取右 padding 序列中最后一个非 padding token 的向量。"""
     if hidden_states.ndim != 3:
         raise ValueError(f"hidden_states must be rank 3, got shape {tuple(hidden_states.shape)}")
     if attention_mask.ndim != 2:
@@ -356,7 +347,7 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError(f"embedding matrix row count mismatch: expected {total_rows} got {memmap.shape[0]}")
         dimension = int(memmap.shape[1])
 
-    progress = tqdm(total=total_rows, desc="cgsd embeddings", unit="row")
+    progress = tqdm(total=total_rows, desc="embeddings", unit="row")
     if row_cursor:
         progress.update(row_cursor)
 
@@ -419,7 +410,7 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         row_cursor = end
         progress.update(len(batch_rows))
 
-    # ids_path 记录已经落盘的样本前缀；重启后直接从该前缀之后继续。
+    # `ids_path` stores the flushed prefix, so restarts continue after it.
     pending_text_limit = int(args.request_batch_size) if backend == "transformers" else int(args.flush_rows)
     for row in rows[row_cursor:]:
         sample_id = str(row[args.id_field])
@@ -455,7 +446,7 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         "embedding_backend": backend,
         "mode": str(args.mode),
         "embedding_text_format": "Query:\\n{query}\\n\\nDocument:\\n{document}",
-        "pair_embedding_version": "cgsd_query_document_v1",
+        "pair_embedding_version": "query_document",
         "row_count": int(total_rows),
         "dimension": int(dimension or 0),
         "max_length": int(args.max_length),

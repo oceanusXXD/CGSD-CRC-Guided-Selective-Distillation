@@ -1,11 +1,4 @@
 #!/usr/bin/env python
-"""用选出的训练样本训练单个 LoRA round。
-
-输入是 `cgsd_train_rows.jsonl` 或显式 `--train_rows_path`，每行必须是统一
-`id/query/document/label|groundtruth` 格式。脚本从基座模型加载 Qwen，
-只训练 LoRA adapter，并把 checkpoint 写到 `round_<n>/model/`。round 0
-表示未训练基座模型，所以本脚本只允许训练 round >= 1。
-"""
 
 from __future__ import annotations
 
@@ -21,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.cgsd_cli_common import (
+from scripts.cli_common import (
     add_runtime_overrides,
     add_stage_cache_args,
     estimate_query_document_prompt_tokens,
@@ -33,6 +26,8 @@ from scripts.cgsd_cli_common import (
     print_existing_stage_result,
     read_jsonl,
     runtime_args_from_cli,
+    selected_train_rows_path,
+    split_ids_path,
     stage_cache_decision,
     summarize_teacher_label_usage,
     train_label_snapshot,
@@ -106,7 +101,7 @@ def build_train_dataloader(
         tokenizer=tokenizer,
         max_length=max_length,
         cache_tokenization=cache_tokenization,
-        input_format="cgsd_chat_binary_v1",
+        input_format="chat_binary",
     )
     kwargs: dict[str, Any] = {
         "dataset": dataset,
@@ -215,7 +210,7 @@ def train_round_model(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--round_index", type=int, required=True, help="要产出的 LoRA round，例如用选出的训练集训练 round1")
+    parser.add_argument("--round_index", type=int, required=True, help="LoRA round to produce, for example round1")
     parser.add_argument("--model_path", default="model/qwen3-0.6b")
     parser.add_argument("--data_path", default="datasets")
     parser.add_argument("--query_field", default="query")
@@ -240,7 +235,7 @@ def main() -> None:
         raise ValueError("round 0 is the base model and has no LoRA checkpoint; train round_index must be >= 1")
     output_dir = output_dir_from_arg(args.output_dir)
     round_dir = output_dir / f"round_{args.round_index}"
-    train_rows_path = input_artifact_path(args.train_rows_path, output_dir / "cgsd_train_rows.jsonl")
+    train_rows_path = input_artifact_path(args.train_rows_path, selected_train_rows_path(output_dir))
     checkpoint_dir = output_artifact_path(args.checkpoint_dir, round_dir / "model")
     training_rows_used_path = output_artifact_path(
         args.training_rows_used_path,
@@ -256,10 +251,10 @@ def main() -> None:
     )
     usage_path = output_artifact_path(args.usage_path, round_dir / "train_usage.json")
     if args.show_result:
-        print_existing_stage_result(stage_name="cgsd_train_round", summary_path=training_summary_path)
+        print_existing_stage_result(stage_name="train_round", summary_path=training_summary_path)
         return
     cache_decision = stage_cache_decision(
-        stage_name="cgsd_train_round",
+        stage_name="train_round",
         required_outputs=[
             checkpoint_dir / "model_config.json",
             training_rows_used_path,
@@ -270,7 +265,7 @@ def main() -> None:
         cache_policy=args.cache_policy,
     )
     if cache_decision.cache_hit:
-        print_existing_stage_result(stage_name="cgsd_train_round", summary_path=training_summary_path)
+        print_existing_stage_result(stage_name="train_round", summary_path=training_summary_path)
         return
 
     round_dir.mkdir(parents=True, exist_ok=True)
@@ -307,7 +302,7 @@ def main() -> None:
         document_field=args.document_field,
         label_field=args.label_field,
     )
-    split_payload = read_json(input_artifact_path(args.split_ids_path, output_dir / "cgsd_split_ids.json"))
+    split_payload = read_json(input_artifact_path(args.split_ids_path, split_ids_path(output_dir)))
     guide_ids = {str(sample_id) for sample_id in split_payload["guide_ids"]}
     guide_examples = filter_examples_by_ids(all_examples, guide_ids)
     device = get_device(args.device)
@@ -352,7 +347,7 @@ def main() -> None:
     write_stage_usage(
         usage_path,
         {
-            "stage_name": "cgsd_train_round",
+            "stage_name": "train_round",
             "round_index": int(args.round_index),
             "cache": cache_decision.to_dict(),
             "student_model_calls": 0,

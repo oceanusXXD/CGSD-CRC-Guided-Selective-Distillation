@@ -1,11 +1,4 @@
 #!/usr/bin/env python
-"""用本地 PyTorch/HF 对 LoRA checkpoint 做 `1/0` 推理。
-
-输入是训练后保存的 checkpoint、本地基座模型路径、统一 JSONL 数据，以及可选
-`cgsd_split_ids.json`。脚本可以跑 `all/guide/final/pool` 任一 split，输出
-逐样本预测 JSONL 和可选 metrics JSON。该入口适合小规模评估或不需要 vLLM
-server 的本地检查；基座 round0 大规模推理通常用 vLLM 入口。
-"""
 
 from __future__ import annotations
 
@@ -88,7 +81,6 @@ def build_dataloader(
     pin_memory: bool,
     max_tokens_per_batch: int = 0,
 ) -> DataLoader:
-    """构造 DataLoader，并在可用时启用 CUDA 输入加速选项。"""
     kwargs = {
         "dataset": dataset,
         "collate_fn": collator,
@@ -112,10 +104,8 @@ def build_dataloader(
 
 
 def load_tokenizer(checkpoint_dir: Path, model_path: str | Path | None) -> AutoTokenizer:
-    """优先从 checkpoint 加载 tokenizer，否则回退到基座模型路径。"""
     source = checkpoint_dir
     try:
-        # 训练阶段会把 tokenizer 文件保存在 adapter checkpoint 旁边。
         tokenizer = AutoTokenizer.from_pretrained(
             source,
             trust_remote_code=True,
@@ -172,7 +162,7 @@ def main() -> None:
     )
     if args.split_name != "all":
         if split_ids_path is None:
-            split_ids_path = checkpoint_dir / "cgsd_split_ids.json"
+            split_ids_path = checkpoint_dir / "split_ids.json"
         split_data = read_json(split_ids_path)
         split_key = {
             "guide": "guide_ids",

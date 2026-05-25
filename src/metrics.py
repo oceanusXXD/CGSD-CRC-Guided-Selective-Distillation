@@ -1,8 +1,9 @@
-"""二分类指标计算。
+"""Binary classification metrics.
 
-输入是标签列表和连续分数列表，默认用 `score > 0` 得到 `1/0` 预测。
-输出 accuracy、precision、recall、positive F1、negative F1、macro F1
-等常用指标，供本地推理和 CRC 摘要复用。
+Inputs are label lists and continuous score lists. By default, `score > 0`
+produces the `1/0` prediction. The returned metrics include accuracy,
+precision, recall, positive F1, negative F1, and macro F1 for local inference
+and CRC summaries.
 """
 
 from __future__ import annotations

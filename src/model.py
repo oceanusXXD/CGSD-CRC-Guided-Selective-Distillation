@@ -1,8 +1,9 @@
-"""带 LoRA adapter 的 Qwen causal LM 封装。
+"""Causal LM wrapper with a LoRA adapter.
 
-本模块负责加载本地 Qwen 基座模型、挂载/保存 LoRA adapter，并把训练 loss
-限制在答案 token `1/0` 上。训练脚本保存的 checkpoint 由这里统一恢复，避免
-训练、本地推理和 vLLM LoRA serving 使用不同的 adapter 配置。
+This module loads the local base model, attaches or saves LoRA adapters, and
+restricts training loss to the answer token `1/0`. Training checkpoints are
+restored through this module so training, local inference, and LoRA serving use
+the same adapter configuration.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ ALL_MODES = sorted(LORA_MODES)
 LAST_LAYER_LORA_PATTERN = "layers"
 LORA_LAYER_SCOPES = {"last1", "last4", "all"}
 
-# 训练和评估共用同一份 mode 映射，避免不同入口加载到不同 LoRA 结构。
+# Training and evaluation share the same mode mapping so different entrypoints
+# cannot load different LoRA structures.
 LORA_TARGET_GROUPS: dict[str, list[str]] = {
     "qv": ["q_proj", "v_proj"],
     "qkvo": ["q_proj", "k_proj", "v_proj", "o_proj"],
@@ -52,7 +54,7 @@ def set_use_cache_false(module: nn.Module) -> None:
 
 
 def get_last_layer_index_from_config(config: Any) -> int:
-    """从标准配置或 Qwen3 text_config 读取最后一层编号。"""
+    """Read the last layer index from a standard config or nested text config."""
     if hasattr(config, "num_hidden_layers"):
         return int(config.num_hidden_layers) - 1
     text_config = getattr(config, "text_config", None)
@@ -62,7 +64,7 @@ def get_last_layer_index_from_config(config: Any) -> int:
 
 
 def resolve_lora_layers_to_transform(config: Any, layer_scope: str) -> int | list[int] | None:
-    """把 LoRA 层范围转换为 PEFT 的 layers_to_transform。"""
+    """Convert a LoRA layer scope into PEFT `layers_to_transform`."""
     if layer_scope not in LORA_LAYER_SCOPES:
         raise ValueError(f"Unsupported LoRA layer scope: {layer_scope}")
     if layer_scope == "all":
@@ -80,11 +82,12 @@ def sparse_causal_lm_loss(
     class_token_weights: dict[int, float] | None = None,
     sample_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """只在被监督的答案 token 位置计算 causal LM loss。
+    """Compute causal LM loss only at supervised answer-token positions.
 
-    Transformers 默认 loss 会把完整 `[batch, seq, vocab]` logits 转成
-    float32。本任务只监督最后的答案 token，所以先取出有效位置再算 loss，
-    目标函数不变，但能避免大块临时显存分配。
+    The default Transformers loss casts the full `[batch, seq, vocab]` logits to
+    float32. This task supervises only answer tokens, so extracting active
+    positions before loss computation preserves the objective while avoiding a
+    large temporary memory allocation.
     """
     shift_logits = logits[:, :-1, :]
     shift_labels = labels[:, 1:]
@@ -117,7 +120,7 @@ def sparse_causal_lm_loss(
 
 
 class QwenGenerativeModel(nn.Module):
-    """用 LoRA 生成/打分二分类答案 token 的 causal LM。"""
+    """Causal LM that generates and scores binary answer tokens with LoRA."""
 
     def __init__(
         self,
@@ -162,7 +165,7 @@ class QwenGenerativeModel(nn.Module):
             loaded_model.config,
             self.lora_layer_scope,
         )
-        # PEFT 会冻结基座模型，只训练 LoRA 权重。
+        # PEFT freezes the base model and trains only LoRA weights.
         self.backbone = self._build_lora_backbone(
             base_model=loaded_model,
             adapter_path=adapter_path,
@@ -285,7 +288,8 @@ class QwenGenerativeModel(nn.Module):
         config = read_json(checkpoint_path / "model_config.json")
         mode = str(config["mode"])
         adapter_path = checkpoint_path / "adapter" if mode in LORA_MODES else None
-        # checkpoint 移动后，评估入口可以覆盖原记录的 model_path。
+        # Evaluation entrypoints may override the recorded model path after a
+        # checkpoint is moved.
         base_model_path = str(model_path) if model_path is not None else str(config["model_path"])
 
         def config_value(key: str, default: Any) -> Any:

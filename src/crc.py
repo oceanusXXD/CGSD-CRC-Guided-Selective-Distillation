@@ -1,11 +1,3 @@
-"""CRC 路由和训练样本选择的核心实现。
-
-输入是 student 预测 JSONL 行，至少包含 `id`、`score`、`prediction` 和
-`label/groundtruth`。`calibrate_crc` 用 guide 预测校准阈值，`apply_crc_defer_set`
-把阈值应用到 guide/pool 并产出 `defer` 集，`select_training_ids` 再按
-`random` 或 `crc-error-mass` 方法选择训练样本 ID。CLI 只薄封装这些函数。
-"""
-
 from __future__ import annotations
 
 import math
@@ -91,17 +83,65 @@ class CRCErrorMassPlan:
 
 
 @dataclass(frozen=True)
+class PCSSPlan:
+    temperature: float
+    alpha: float
+    lambda_hat: float
+    tau_crc: float
+    budget: int
+    p_hat_1: float
+    target_label0_budget: int
+    target_label1_budget: int
+    B_label0: int
+    B_label1: int
+    guide_count: int
+    guide_label0_count: int
+    guide_label1_count: int
+    pool_label0_count: int
+    pool_label1_count: int
+    pool_accept_count: int
+    pool_defer_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "temperature": float(self.temperature),
+            "alpha": float(self.alpha),
+            "lambda_hat": float(self.lambda_hat),
+            "tau_crc": float(self.tau_crc),
+            "budget": int(self.budget),
+            "p_hat_1": float(self.p_hat_1),
+            "target_label0_budget": int(self.target_label0_budget),
+            "target_label1_budget": int(self.target_label1_budget),
+            "B_label0": int(self.B_label0),
+            "B_label1": int(self.B_label1),
+            "guide_count": int(self.guide_count),
+            "guide_label0_count": int(self.guide_label0_count),
+            "guide_label1_count": int(self.guide_label1_count),
+            "pool_label0_count": int(self.pool_label0_count),
+            "pool_label1_count": int(self.pool_label1_count),
+            "pool_accept_count": int(self.pool_accept_count),
+            "pool_defer_count": int(self.pool_defer_count),
+        }
+
+
+@dataclass(frozen=True)
 class SelectionResult:
     method: str
     selected_ids: list[str]
     accept_ids: list[str]
     defer_ids: list[str]
+    label0_ids: list[str]
+    label1_ids: list[str]
     requested_budget: int
     selected_budget: int
     requested_accept_budget: int
     requested_defer_budget: int
+    requested_label0_budget: int
+    requested_label1_budget: int
     accept_candidate_count: int
     defer_candidate_count: int
+    label0_candidate_count: int
+    label1_candidate_count: int
     shortfall: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,12 +150,18 @@ class SelectionResult:
             "selected_ids": list(self.selected_ids),
             "accept_ids": list(self.accept_ids),
             "defer_ids": list(self.defer_ids),
+            "label0_ids": list(self.label0_ids),
+            "label1_ids": list(self.label1_ids),
             "requested_budget": int(self.requested_budget),
             "selected_budget": int(self.selected_budget),
             "requested_accept_budget": int(self.requested_accept_budget),
             "requested_defer_budget": int(self.requested_defer_budget),
+            "requested_label0_budget": int(self.requested_label0_budget),
+            "requested_label1_budget": int(self.requested_label1_budget),
             "accept_candidate_count": int(self.accept_candidate_count),
             "defer_candidate_count": int(self.defer_candidate_count),
+            "label0_candidate_count": int(self.label0_candidate_count),
+            "label1_candidate_count": int(self.label1_candidate_count),
             "shortfall": bool(self.shortfall),
         }
 
@@ -324,6 +370,84 @@ def compute_crc_error_mass_plan(
     )
 
 
+def _allocate_label_budgets(
+    *,
+    budget: int,
+    p_hat_1: float,
+    label0_count: int,
+    label1_count: int,
+) -> tuple[int, int, int, int]:
+    requested_budget = max(0, int(budget))
+    positive_rate = max(0.0, min(1.0, float(p_hat_1)))
+    target_label1_budget = max(0, min(requested_budget, _round_half_up(requested_budget * positive_rate)))
+    target_label0_budget = requested_budget - target_label1_budget
+
+    label0_capacity = max(0, int(label0_count))
+    label1_capacity = max(0, int(label1_count))
+    label0_budget = min(target_label0_budget, label0_capacity)
+    label1_budget = min(target_label1_budget, label1_capacity)
+
+    feasible_budget = min(requested_budget, label0_capacity + label1_capacity)
+    remaining = feasible_budget - label0_budget - label1_budget
+    if remaining > 0:
+        label0_extra = min(remaining, label0_capacity - label0_budget)
+        label0_budget += label0_extra
+        remaining -= label0_extra
+    if remaining > 0:
+        label1_extra = min(remaining, label1_capacity - label1_budget)
+        label1_budget += label1_extra
+
+    return target_label0_budget, target_label1_budget, label0_budget, label1_budget
+
+
+def compute_pcss_plan(
+    guide_decisions: Sequence[Mapping[str, Any]],
+    pool_decisions: Sequence[Mapping[str, Any]],
+    *,
+    budget: int,
+    temperature: float,
+    lambda_hat: float,
+    alpha: float,
+) -> PCSSPlan:
+    requested_budget = int(budget)
+    guide_count = len(guide_decisions)
+    if guide_count <= 0:
+        raise ValueError("guide_decisions cannot be empty")
+    guide_label1_count = sum(1 for row in guide_decisions if _row_label(row) == 1)
+    guide_label0_count = guide_count - guide_label1_count
+    p_hat_1 = _rate(guide_label1_count, guide_count)
+
+    pool_label1_count = sum(1 for row in pool_decisions if _row_prediction(row) == 1)
+    pool_label0_count = len(pool_decisions) - pool_label1_count
+    pool_defer_count = sum(1 for row in pool_decisions if bool(row.get("defer", False)))
+    pool_accept_count = len(pool_decisions) - pool_defer_count
+    target_label0_budget, target_label1_budget, label0_budget, label1_budget = _allocate_label_budgets(
+        budget=requested_budget,
+        p_hat_1=p_hat_1,
+        label0_count=pool_label0_count,
+        label1_count=pool_label1_count,
+    )
+    return PCSSPlan(
+        temperature=float(temperature),
+        alpha=float(alpha),
+        lambda_hat=float(lambda_hat),
+        tau_crc=crc_margin_cutoff(lambda_hat, temperature),
+        budget=requested_budget,
+        p_hat_1=p_hat_1,
+        target_label0_budget=target_label0_budget,
+        target_label1_budget=target_label1_budget,
+        B_label0=label0_budget,
+        B_label1=label1_budget,
+        guide_count=guide_count,
+        guide_label0_count=guide_label0_count,
+        guide_label1_count=guide_label1_count,
+        pool_label0_count=pool_label0_count,
+        pool_label1_count=pool_label1_count,
+        pool_accept_count=pool_accept_count,
+        pool_defer_count=pool_defer_count,
+    )
+
+
 def _unique_ids(rows: Sequence[Mapping[str, Any]], *, blocked_ids: set[str]) -> list[str]:
     seen: set[str] = set()
     ids: list[str] = []
@@ -343,7 +467,7 @@ def _random_ids(candidate_ids: Sequence[str], *, k: int, seed: int) -> list[str]
     return ids[: max(0, min(int(k), len(ids)))]
 
 
-def _high_confidence_accept_ids(
+def _high_confidence_ids(
     candidate_ids: Sequence[str],
     rows_by_id: Mapping[str, Mapping[str, Any]],
     *,
@@ -355,6 +479,31 @@ def _high_confidence_accept_ids(
     )[: max(0, int(k))]
 
 
+def _row_routing_score(row: Mapping[str, Any], *, temperature: float) -> float:
+    if "routing_score" in row and row.get("routing_score") is not None:
+        routing_score = float(row["routing_score"])
+    elif "score" in row:
+        routing_score = routing_score_from_margin(float(row["score"]), temperature)
+    else:
+        raise ValueError(f"row missing routing_score/score for difficulty selection: {row!r}")
+    if not math.isfinite(routing_score):
+        raise ValueError(f"routing_score must be finite, got {routing_score!r}")
+    return routing_score
+
+
+def _uncertain_ids(
+    candidate_ids: Sequence[str],
+    rows_by_id: Mapping[str, Mapping[str, Any]],
+    *,
+    k: int,
+    temperature: float,
+) -> list[str]:
+    return sorted(
+        list(candidate_ids),
+        key=lambda sample_id: (_row_routing_score(rows_by_id[sample_id], temperature=temperature), sample_id),
+    )[: max(0, int(k))]
+
+
 def select_training_ids(
     pool_decisions: Sequence[Mapping[str, Any]],
     *,
@@ -363,36 +512,99 @@ def select_training_ids(
     seed: int,
     blocked_ids: set[str] | None = None,
     crc_error_mass_plan: CRCErrorMassPlan | None = None,
+    pcss_plan: PCSSPlan | None = None,
     accept_strategy: str = "random",
     defer_strategy: str = "random",
 ) -> SelectionResult:
     method_name = str(method)
-    if method_name not in {"random", "crc-error-mass"}:
-        raise ValueError("method must be one of {'random', 'crc-error-mass'}")
-    if defer_strategy != "random":
-        raise ValueError("only defer_strategy='random' is supported in the simplified public entrypoint")
+    if method_name not in {"random", "pcss", "crc-error-mass"}:
+        raise ValueError("method must be one of {'random', 'pcss', 'crc-error-mass'}")
+    if accept_strategy not in {"random", "high-confidence"}:
+        raise ValueError("accept_strategy must be one of {'random', 'high-confidence'}")
+    if defer_strategy not in {"random", "high-confidence"}:
+        raise ValueError("defer_strategy must be one of {'random', 'high-confidence'}")
     blocked = set(blocked_ids or set())
     rows_by_id = {_row_id(row): row for row in pool_decisions}
     all_ids = _unique_ids(pool_decisions, blocked_ids=blocked)
     accept_ids = [sample_id for sample_id in all_ids if not bool(rows_by_id[sample_id].get("defer", False))]
     defer_ids = [sample_id for sample_id in all_ids if bool(rows_by_id[sample_id].get("defer", False))]
+    label0_ids = [sample_id for sample_id in all_ids if _row_prediction(rows_by_id[sample_id]) == 0]
+    label1_ids = [sample_id for sample_id in all_ids if _row_prediction(rows_by_id[sample_id]) == 1]
     requested_budget = int(budget)
 
     if method_name == "random":
         selected = _random_ids(all_ids, k=requested_budget, seed=seed)
-        selected_accept = [sample_id for sample_id in selected if sample_id in set(accept_ids)]
-        selected_defer = [sample_id for sample_id in selected if sample_id in set(defer_ids)]
+        accept_id_set = set(accept_ids)
+        defer_id_set = set(defer_ids)
+        label0_id_set = set(label0_ids)
+        label1_id_set = set(label1_ids)
+        selected_accept = [sample_id for sample_id in selected if sample_id in accept_id_set]
+        selected_defer = [sample_id for sample_id in selected if sample_id in defer_id_set]
+        selected_label0 = [sample_id for sample_id in selected if sample_id in label0_id_set]
+        selected_label1 = [sample_id for sample_id in selected if sample_id in label1_id_set]
         return SelectionResult(
             method=method_name,
             selected_ids=selected,
             accept_ids=selected_accept,
             defer_ids=selected_defer,
+            label0_ids=selected_label0,
+            label1_ids=selected_label1,
             requested_budget=requested_budget,
             selected_budget=len(selected),
             requested_accept_budget=0,
             requested_defer_budget=0,
+            requested_label0_budget=0,
+            requested_label1_budget=0,
             accept_candidate_count=len(accept_ids),
             defer_candidate_count=len(defer_ids),
+            label0_candidate_count=len(label0_ids),
+            label1_candidate_count=len(label1_ids),
+            shortfall=len(selected) < requested_budget,
+        )
+
+    if method_name == "pcss":
+        if pcss_plan is None:
+            raise ValueError("pcss_plan is required for method='pcss'")
+        _, _, label0_budget, label1_budget = _allocate_label_budgets(
+            budget=requested_budget,
+            p_hat_1=pcss_plan.p_hat_1,
+            label0_count=len(label0_ids),
+            label1_count=len(label1_ids),
+        )
+        selected_label0 = _uncertain_ids(
+            label0_ids,
+            rows_by_id,
+            k=label0_budget,
+            temperature=pcss_plan.temperature,
+        )
+        selected_label1 = _uncertain_ids(
+            label1_ids,
+            rows_by_id,
+            k=label1_budget,
+            temperature=pcss_plan.temperature,
+        )
+        selected = [*selected_label1, *selected_label0]
+        accept_id_set = set(accept_ids)
+        defer_id_set = set(defer_ids)
+        selected_accept = [sample_id for sample_id in selected if sample_id in accept_id_set]
+        selected_defer = [sample_id for sample_id in selected if sample_id in defer_id_set]
+        return SelectionResult(
+            method=method_name,
+            selected_ids=selected,
+            accept_ids=selected_accept,
+            defer_ids=selected_defer,
+            label0_ids=selected_label0,
+            label1_ids=selected_label1,
+            requested_budget=requested_budget,
+            selected_budget=len(selected),
+            requested_accept_budget=0,
+            requested_defer_budget=0,
+            requested_label0_budget=label0_budget,
+            requested_label1_budget=label1_budget,
+            accept_candidate_count=len(accept_ids),
+            defer_candidate_count=len(defer_ids),
+            label0_candidate_count=len(label0_ids),
+            label1_candidate_count=len(label1_ids),
             shortfall=len(selected) < requested_budget,
         )
 
@@ -401,23 +613,34 @@ def select_training_ids(
     accept_budget = min(int(crc_error_mass_plan.B_accept), len(accept_ids))
     defer_budget = min(int(crc_error_mass_plan.B_defer), len(defer_ids))
     if accept_strategy == "high-confidence":
-        selected_accept = _high_confidence_accept_ids(accept_ids, rows_by_id, k=accept_budget)
-    elif accept_strategy == "random":
-        selected_accept = _random_ids(accept_ids, k=accept_budget, seed=seed)
+        selected_accept = _high_confidence_ids(accept_ids, rows_by_id, k=accept_budget)
     else:
-        raise ValueError("accept_strategy must be one of {'random', 'high-confidence'}")
-    selected_defer = _random_ids(defer_ids, k=defer_budget, seed=seed + 1)
+        selected_accept = _random_ids(accept_ids, k=accept_budget, seed=seed)
+    if defer_strategy == "high-confidence":
+        selected_defer = _high_confidence_ids(defer_ids, rows_by_id, k=defer_budget)
+    else:
+        selected_defer = _random_ids(defer_ids, k=defer_budget, seed=seed + 1)
     selected = [*selected_accept, *selected_defer]
+    label0_id_set = set(label0_ids)
+    label1_id_set = set(label1_ids)
+    selected_label0 = [sample_id for sample_id in selected if sample_id in label0_id_set]
+    selected_label1 = [sample_id for sample_id in selected if sample_id in label1_id_set]
     return SelectionResult(
         method=method_name,
         selected_ids=selected,
         accept_ids=selected_accept,
         defer_ids=selected_defer,
+        label0_ids=selected_label0,
+        label1_ids=selected_label1,
         requested_budget=requested_budget,
         selected_budget=len(selected),
         requested_accept_budget=int(crc_error_mass_plan.B_accept),
         requested_defer_budget=int(crc_error_mass_plan.B_defer),
+        requested_label0_budget=0,
+        requested_label1_budget=0,
         accept_candidate_count=len(accept_ids),
         defer_candidate_count=len(defer_ids),
+        label0_candidate_count=len(label0_ids),
+        label1_candidate_count=len(label1_ids),
         shortfall=len(selected) < requested_budget,
     )

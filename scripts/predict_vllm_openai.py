@@ -1,12 +1,4 @@
 #!/usr/bin/env python
-"""通过 vLLM OpenAI-compatible server 执行 CGSD 推理。
-
-输入是统一 JSONL、`cgsd_split_ids.json`、可选 LoRA checkpoint，以及一组
-vLLM serving 参数。脚本会对 guide、final 和 pool 三个 split 一次性做 raw
-completion 推理，只生成 1 个 token，并读取 `1/0` 的 logprob margin。
-输出包括全量预测 `all_student_predictions.jsonl` 和三个 split 对应的预测文件，
-可直接供 CRC 校准、选样和最终评估使用。
-"""
 
 from __future__ import annotations
 
@@ -27,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.cgsd_cli_common import (
+from scripts.cli_common import (
     add_stage_cache_args,
     estimate_query_document_prompt_tokens,
     input_artifact_path,
@@ -39,7 +31,9 @@ from scripts.cgsd_cli_common import (
     output_dir_from_arg,
     print_existing_stage_result,
     read_jsonl,
+    selected_train_rows_path,
     split_examples,
+    split_ids_path,
     stage_cache_decision,
     summarize_teacher_label_usage,
     train_label_snapshot,
@@ -47,7 +41,7 @@ from scripts.cgsd_cli_common import (
     StageCacheDecision,
 )
 from src.binary_protocol import BINARY_SCORE_SOURCE, normalize_binary_token
-from src.data import PairExample, format_cgsd_chat_prompt
+from src.data import PairExample, format_binary_chat_prompt
 from src.utils import read_json, write_json, write_jsonl
 
 
@@ -75,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train_label_snapshot_path", default=None)
     parser.add_argument("--usage_path", default=None)
 
-    parser.add_argument("--base_url", default="http://127.0.0.1:18021/v1")
+    parser.add_argument("--base_url", default="http://localhost:8000/v1")
     parser.add_argument("--api_key", default="EMPTY")
     parser.add_argument("--served_model_name", default=None)
     parser.add_argument("--lora_model_name", default=None)
@@ -114,12 +108,12 @@ def _resolve_host_port(base_url: str) -> tuple[str, int]:
     if raw and "://" not in raw:
         raw = f"http://{raw}"
     parsed = urlparse(raw)
-    return str(parsed.hostname or "127.0.0.1"), int(parsed.port or 8000)
+    return str(parsed.hostname or "localhost"), int(parsed.port or 8000)
 
 
 def _server_model_names(args: argparse.Namespace) -> tuple[str, str]:
     base_name = str(args.served_model_name or Path(str(args.model_path)).name or "qwen3-0.6b")
-    lora_name = str(args.lora_model_name or f"cgsd_round_{int(args.round_index)}")
+    lora_name = str(args.lora_model_name or f"round_{int(args.round_index)}")
     return base_name, lora_name
 
 
@@ -267,13 +261,13 @@ def _start_vllm_server(args: argparse.Namespace, *, checkpoint_dir: Path | None)
     except BaseException:
         handle.close()
         raise
-    # 把日志句柄挂在 Popen 上，保证 server 生命周期内不会被提前关闭。
-    setattr(proc, "_cgsd_log_handle", handle)
+    # Keep the log handle alive for the full server process lifetime.
+    setattr(proc, "_server_log_handle", handle)
     return proc
 
 
 def _close_server_log_handle(proc: subprocess.Popen[str]) -> None:
-    handle = getattr(proc, "_cgsd_log_handle", None)
+    handle = getattr(proc, "_server_log_handle", None)
     if handle is not None and not handle.closed:
         handle.close()
 
@@ -340,15 +334,7 @@ def _wait_for_model(client: Any, *, model_name: str, timeout: int, proc: subproc
 
 
 def _completion_prompt(example: PairExample) -> str:
-    """构造与训练阶段一致的手写 Qwen3 no-thinking prompt。
-
-    这里必须走 `format_cgsd_chat_prompt`，不能只拼到
-    `<|im_start|>assistant\n`：Qwen3 raw completions 不会自动执行
-    chat template 的 `enable_thinking=False` 分支。如果 prompt 缺少
-    空 `<think>\n\n</think>\n\n` block，首 token 会高概率变成
-    `<think>`，后续就拿不到 `1/0` 的分类 logprobs。
-    """
-    return format_cgsd_chat_prompt(example.query, example.document)
+    return format_binary_chat_prompt(example.query, example.document)
 
 
 def _normalize_token(token: Any) -> str:
@@ -356,14 +342,6 @@ def _normalize_token(token: Any) -> str:
 
 
 def _collect_binary_logprobs(choice: Any) -> tuple[float | None, float | None]:
-    """从首个生成 token 的 top_logprobs 中提取 1/0 logprob。
-
-    OpenAI `/v1/completions` 返回的是 legacy completion logprobs:
-    `choice.logprobs.top_logprobs[0]` 是 token->logprob dict。
-    Chat completions 的 logprobs 形状是 `content[].top_logprobs[]`；
-    下面保留兼容解析，但本脚本的 round0 路径应使用 completions，
-    这样不会让 vLLM 再套一层 chat template。
-    """
     completion_logprobs = getattr(choice, "logprobs", None)
     completion_top_logprobs = list(getattr(completion_logprobs, "top_logprobs", []) or [])
     if completion_top_logprobs and isinstance(completion_top_logprobs[0], dict):
@@ -428,7 +406,7 @@ def _predict_one(
         try:
             prompt = _completion_prompt(example)
             # Use raw completions, not chat completions. The prompt already
-            # contains the exact Qwen3 message markers and no-thinking block
+            # contains the exact chat markers and no-thinking block
             # used by training; sending it through chat completions would ask
             # vLLM to apply another chat template and can shift the scored
             # first classification token.
@@ -445,15 +423,15 @@ def _predict_one(
             if one_lp is None and zero_lp is None:
                 raise RuntimeError(
                     f"missing 1/0 logprobs for output={content!r}; "
-                    "for Qwen3 this usually means the raw prompt did not end "
+                    "for this model family this usually means the raw prompt did not end "
                     "after the empty no-thinking block before scoring."
                 )
             if one_lp is None:
                 one_lp = -100.0
             if zero_lp is None:
                 zero_lp = -100.0
-            # score 是有方向的 1-vs-0 margin；CRC 的无方向确信度
-            # 在 calibrate 阶段再统一转成 sigmoid(abs(score)/T)。
+            # `score` is the signed 1-vs-0 margin. CRC converts it to an
+            # unsigned confidence during calibration.
             score = float(one_lp) - float(zero_lp)
             probability = float(1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, score)))))
             prediction = 1 if score > 0.0 else 0
@@ -516,8 +494,8 @@ def _predict_many(
     output_path: Path,
     partial_path: Path,
 ) -> list[dict[str, Any]]:
-    # partial 文件用于长时间 vLLM 全量推理的断点续跑；只由主线程写入，
-    # 避免高并发下 JSONL 行交错导致文件损坏。
+    # The partial file supports long inference resumes and is written only by
+    # the main thread to keep JSONL rows from interleaving.
     existing_by_id: dict[str, dict[str, Any]] = {}
     if partial_path.exists():
         for row in read_jsonl(partial_path):
@@ -704,7 +682,7 @@ def main() -> None:
     )
     usage_path = output_artifact_path(args.usage_path, round_dir / "predict_usage.json")
     if args.show_result:
-        print_existing_stage_result(stage_name="cgsd_predict_vllm_openai", summary_path=usage_path)
+        print_existing_stage_result(stage_name="predict_vllm_openai", summary_path=usage_path)
         return
     required_outputs = [
         all_predictions_path,
@@ -716,7 +694,7 @@ def main() -> None:
     ]
     try:
         cache_decision = stage_cache_decision(
-            stage_name="cgsd_predict_vllm_openai",
+            stage_name="predict_vllm_openai",
             required_outputs=required_outputs,
             cache_policy=args.cache_policy,
         )
@@ -725,7 +703,7 @@ def main() -> None:
             existing = [str(path) for path in required_outputs if path.exists()]
             missing = [str(path) for path in required_outputs if not path.exists()]
             cache_decision = StageCacheDecision(
-                stage_name="cgsd_predict_vllm_openai",
+                stage_name="predict_vllm_openai",
                 cache_policy="reuse",
                 cache_hit=False,
                 action="run",
@@ -735,7 +713,7 @@ def main() -> None:
             print(
                 json.dumps(
                     {
-                        "stage_name": "cgsd_predict_vllm_openai",
+                        "stage_name": "predict_vllm_openai",
                         "cache_policy": "reuse",
                         "partial_cache_resume": True,
                         "existing_outputs": existing,
@@ -749,12 +727,12 @@ def main() -> None:
         else:
             raise
     if cache_decision.cache_hit:
-        print_existing_stage_result(stage_name="cgsd_predict_vllm_openai", summary_path=usage_path)
+        print_existing_stage_result(stage_name="predict_vllm_openai", summary_path=usage_path)
         return
     if args.cache_policy == "overwrite" and partial_predictions_path.exists():
         partial_predictions_path.unlink()
 
-    split_payload = read_json(input_artifact_path(args.split_ids_path, output_dir / "cgsd_split_ids.json")) if args.split_ids_path else load_split_ids(output_dir)
+    split_payload = read_json(input_artifact_path(args.split_ids_path, split_ids_path(output_dir))) if args.split_ids_path else load_split_ids(output_dir)
     checkpoint_dir = _checkpoint_for_round(output_dir, int(args.round_index), args.checkpoint_dir)
     served_model_name, lora_model_name = _server_model_names(args)
     request_model_name = served_model_name if checkpoint_dir is None else lora_model_name
@@ -781,7 +759,7 @@ def main() -> None:
             else {}
         )
         selected_train_rows = (
-            read_jsonl(input_artifact_path(args.selected_train_rows_path, output_dir / "cgsd_train_rows.jsonl"))
+            read_jsonl(input_artifact_path(args.selected_train_rows_path, selected_train_rows_path(output_dir)))
             if args.selected_train_rows_path
             else load_selected_train_rows(output_dir)
         )
@@ -811,7 +789,7 @@ def main() -> None:
         write_stage_usage(
             usage_path,
             {
-                "stage_name": "cgsd_predict_vllm_openai",
+                "stage_name": "predict_vllm_openai",
                 "round_index": int(args.round_index),
                 "cache": cache_decision.to_dict(),
                 "student_model_calls": len(predictions),

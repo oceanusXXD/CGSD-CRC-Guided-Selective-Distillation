@@ -1,8 +1,9 @@
-"""训练、预测和评估循环。
+"""Training, prediction, and evaluation loops.
 
-这里封装 LoRA 训练、基于 prompt 的本地打分，以及把模型输出写成统一 JSONL
-结果的逻辑。上层脚本只负责读入数据和命名输出文件，不要在脚本里重复实现
-batch 逻辑、token 选择或指标计算。
+This module owns LoRA training, prompt-based local scoring, and writing model
+outputs in the unified JSONL format. Upper-level scripts should only read data
+and name output files; batch logic, token selection, and metric computation
+belong here.
 """
 
 from __future__ import annotations
@@ -166,7 +167,8 @@ def evaluate_model(
                     "one_logit": float(one_logit),
                     "probability": float(probability),
                     "prediction": prediction,
-                    # 对外工件统一使用 1/0，避免历史标签别名泄漏到算法输入。
+                    # Public artifacts use canonical 1/0 labels so label
+                    # aliases cannot enter algorithm inputs.
                     "generated_text": str(int(prediction)),
                     "score_source": score_source,
                 }
@@ -192,7 +194,7 @@ def predict_model(
     predictions_path: str | Path | None = None,
     row_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """只用 prompt 位置的 1/0 logits 打分，并返回逐样本预测行。"""
+    """Score with prompt-position 1/0 logits and return per-sample rows."""
     model.eval()
     negative_token_id = get_single_token_id(tokenizer, negative_token_text)
     positive_token_id = get_single_token_id(tokenizer, positive_token_text)
@@ -241,7 +243,8 @@ def predict_model(
                     "one_logit": float(one_logit),
                     "probability": float(probability),
                     "prediction": int(prediction),
-                    # 对外工件统一使用 1/0，避免历史标签别名泄漏到算法输入。
+                    # Public artifacts use canonical 1/0 labels so label
+                    # aliases cannot enter algorithm inputs.
                     "generated_text": str(int(prediction)),
                     "score_source": score_source,
                 }
@@ -285,7 +288,7 @@ def fit(
     updates_per_epoch = (len(train_loader) + gradient_accumulation_steps - 1) // gradient_accumulation_steps
     total_training_steps = max(1, updates_per_epoch * epochs)
     warmup_steps = int(total_training_steps * warmup_ratio)
-    # scheduler 按 optimizer update 计步，而不是按 dataloader batch 计步。
+    # The scheduler steps on optimizer updates, not dataloader batches.
     if scheduler_type == "linear":
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
@@ -333,7 +336,8 @@ def fit(
 
         history.append(epoch_record)
         print(json.dumps(epoch_record, ensure_ascii=False, sort_keys=True))
-        # 每个 epoch 完成后立即落盘，长时间 GPU 训练中断时仍可复查已完成进度。
+        # Persist after every epoch so interrupted long-running training jobs
+        # still leave auditable progress.
         output_path = Path(output_dir)
         write_jsonl(history, output_path / "training_history.jsonl")
         write_json(

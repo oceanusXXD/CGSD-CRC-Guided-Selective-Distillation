@@ -1,11 +1,4 @@
 #!/usr/bin/env python
-"""从 guide/pool 预测文件计算 CRC 阈值和 accept/defer 集。
-
-输入是 student 预测 JSONL：guide 用来校准 `lambda_hat`，pool 用同一阈值
-生成 `pool_crc_predictions.jsonl`。输出的 CRC 行会追加 `routing_score`、
-`crc_decision`、`defer`、`decision_threshold` 和 `tau_crc`，其中
-`defer=true` 的行就是后续方法选数据使用的 defer 集。
-"""
 
 from __future__ import annotations
 
@@ -18,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.cgsd_cli_common import (
+from scripts.cli_common import (
     add_stage_cache_args,
     input_artifact_path,
     output_artifact_path,
@@ -31,7 +24,7 @@ from scripts.cgsd_cli_common import (
 from src.crc import (
     apply_crc_defer_set,
     calibrate_crc,
-    compute_crc_error_mass_plan,
+    compute_pcss_plan,
     summarize_crc_decisions,
 )
 from src.metrics import compute_binary_metrics
@@ -86,16 +79,16 @@ def main() -> None:
     crc_summary_path = output_artifact_path(args.crc_summary_path, round_dir / "crc_summary.json")
     usage_path = output_artifact_path(args.usage_path, round_dir / "crc_usage.json")
     if args.show_result:
-        print_existing_stage_result(stage_name="cgsd_compute_crc", summary_path=crc_summary_path)
+        print_existing_stage_result(stage_name="compute_crc", summary_path=crc_summary_path)
         return
 
     cache_decision = stage_cache_decision(
-        stage_name="cgsd_compute_crc",
+        stage_name="compute_crc",
         required_outputs=[guide_crc_predictions_path, pool_crc_predictions_path, crc_summary_path, usage_path],
         cache_policy=args.cache_policy,
     )
     if cache_decision.cache_hit:
-        print_existing_stage_result(stage_name="cgsd_compute_crc", summary_path=crc_summary_path)
+        print_existing_stage_result(stage_name="compute_crc", summary_path=crc_summary_path)
         return
 
     guide_predictions = read_jsonl(guide_predictions_path)
@@ -117,7 +110,7 @@ def main() -> None:
     )
     selection_plan = None
     if int(args.selection_budget) > 0:
-        selection_plan = compute_crc_error_mass_plan(
+        selection_plan = compute_pcss_plan(
             guide_decisions,
             pool_decisions,
             budget=int(args.selection_budget),
@@ -134,7 +127,8 @@ def main() -> None:
         "guide_summary": summarize_crc_decisions(guide_decisions),
         "pool_summary": summarize_crc_decisions(pool_decisions),
         "pool_metrics": compute_binary_metrics(_labels(pool_predictions), _scores(pool_predictions)),
-        "crc_error_mass_plan": selection_plan.to_dict() if selection_plan is not None else None,
+        "pcss_plan": selection_plan.to_dict() if selection_plan is not None else None,
+        "crc_error_mass_plan": None,
         "guide_predictions_path": str(guide_predictions_path),
         "pool_predictions_path": str(pool_predictions_path),
         "guide_crc_predictions_path": str(guide_crc_predictions_path),
@@ -146,7 +140,7 @@ def main() -> None:
     write_stage_usage(
         usage_path,
         {
-            "stage_name": "cgsd_compute_crc",
+            "stage_name": "compute_crc",
             "round_index": int(args.round_index),
             "cache": cache_decision.to_dict(),
             "guide_rows": len(guide_predictions),

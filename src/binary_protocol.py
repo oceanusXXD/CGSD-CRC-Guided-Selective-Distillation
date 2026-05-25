@@ -1,9 +1,10 @@
-"""二分类协议的唯一来源。
+"""Single source of truth for the binary classification protocol.
 
-本模块集中定义本项目所有训练、推理、CRC 和评估共享的二分类约定：
-正类答案 token 固定为 `1`，负类答案 token 固定为 `0`，预测分数固定为
-`logit/logprob(1) - logit/logprob(0)`。其他模块不要重新定义标签别名或
-prompt 文本，避免训练和推理协议漂移。
+This module defines the shared convention used by training, inference, CRC, and
+evaluation. The positive answer token is `1`, the negative answer token is `0`,
+and the prediction score is `logit/logprob(1) - logit/logprob(0)`. Other modules
+should not redefine label aliases or prompt text, because that can make the
+training and inference protocols drift apart.
 """
 
 from __future__ import annotations

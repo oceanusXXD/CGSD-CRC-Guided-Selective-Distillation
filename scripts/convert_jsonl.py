@@ -1,11 +1,4 @@
 #!/usr/bin/env python
-"""把外部 JSONL 数据集转换成项目统一格式。
-
-输入可以是任意字段名的 JSONL，通过 `--id_field/--query_field/
---document_field/--label_field` 映射到 `id/query/document/groundtruth`。
-如果一个数据集共用同一个 query，可以传 `--fixed_query`，这样源数据只需要
-提供 document 和 label。输出会保留原始字段，并追加统一字段。
-"""
 
 from __future__ import annotations
 

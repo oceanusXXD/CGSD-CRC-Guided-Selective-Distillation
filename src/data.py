@@ -1,9 +1,10 @@
-"""query-document 二分类任务的数据加载和 prompt 构造。
+"""Data loading and prompt construction for query-document binary tasks.
 
-这是外部数据接入的主入口。`load_examples` 读取统一 JSONL 格式
-`id/query/document/groundtruth`，检查字段、标签和 ID 唯一性；训练和推理数据集
-都复用这里的 prompt builder，保证 LoRA 训练、本地 PyTorch 推理和 vLLM raw
-completion 推理看到同一套 `1/0` 二分类协议。
+This is the main entrypoint for external data. `load_examples` reads the unified
+`id/query/document/groundtruth` JSONL format and validates fields, labels, and
+ID uniqueness. Training and inference datasets reuse the prompt builder here so
+LoRA training, local PyTorch inference, and raw-completion inference all see the
+same `1/0` binary protocol.
 """
 
 from __future__ import annotations
@@ -21,10 +22,11 @@ from .binary_protocol import BINARY_SYSTEM_PROMPT, binary_user_prompt, canonical
 
 T = TypeVar("T")
 
-# Qwen3 tokenizer_config 在 `enable_thinking=False` 时会插入这段空 thinking block。
-# 训练和 vLLM raw completion 必须共用同一个 prompt 结尾，才能让首个被打分
-# token 是分类答案 `1/0`，而不是 `<think>`。
-CGSD_EMPTY_THINKING_BLOCK = "<think>\n\n</think>\n\n"
+# The target tokenizer config inserts this empty thinking block when thinking is
+# disabled. Training and raw-completion inference must share the same prompt
+# suffix so the first scored token is the `1/0` classification answer rather
+# than `<think>`.
+EMPTY_THINKING_BLOCK = "<think>\n\n</think>\n\n"
 
 
 @dataclass(frozen=True)
@@ -38,23 +40,25 @@ class PairExample:
 
 
 def format_query_document(query: str, document: str) -> str:
-    """构造带显式边界的 query-document prompt。"""
+    """Build a query-document prompt with explicit boundaries."""
     return f"{BINARY_SYSTEM_PROMPT}\n{binary_user_prompt(query, document)}"
 
 
-def format_cgsd_chat_prompt(query: str, document: str) -> str:
-    """构造 CGSD 使用的 Qwen chat prompt，停在 assistant 答案之前。
+def format_binary_chat_prompt(query: str, document: str) -> str:
+    """Build the chat prompt and stop before the assistant answer.
 
-    `<|im_start|>` / `<|im_end|>` 是 Qwen chat/instruct 模型原生的
-    chat template 消息边界标记。训练和推理都保留这套格式，可以让 LoRA
-    看到的上下文与基座模型的指令微调格式一致。
+    `<|im_start|>` / `<|im_end|>` are the chat-template message boundary
+    markers used by the target instruction model. Training and inference keep
+    this format so the LoRA adapter sees the same context structure as the base
+    instruction-tuned model.
 
-    Qwen3 的官方 no-thinking chat template 会在 generation prompt 后追加
-    空 thinking block。这里显式手写同一段内容，避免 raw completions
-    把 `<think>` 当成第一个 assistant output token。
+    The no-thinking chat template appends an empty thinking block after the
+    generation prompt. This function writes the same block explicitly so raw
+    completions do not treat `<think>` as the first assistant output token.
 
-    CGSD 的 CRC 分数读取第一个分类答案 token 的 logits，因此 prompt
-    必须停在空 thinking block 后面，不能提前追加 `1/0` 答案。
+    CRC reads logits from the first classification answer token, so the prompt
+    must stop after the empty thinking block and must not append the `1/0`
+    answer early.
     """
     return (
         "<|im_start|>system\n"
@@ -62,23 +66,24 @@ def format_cgsd_chat_prompt(query: str, document: str) -> str:
         "<|im_start|>user\n"
         f"{binary_user_prompt(query, document)}<|im_end|>\n"
         "<|im_start|>assistant\n"
-        f"{CGSD_EMPTY_THINKING_BLOCK}"
+        f"{EMPTY_THINKING_BLOCK}"
     )
 
 
 def format_generation_answer(label: int) -> str:
-    """把二分类标签转换为生成目标 token。"""
+    """Convert a binary label into the generation target token."""
     return canonical_binary_answer(label)
 
 
-def format_cgsd_chat_answer(label: int) -> str:
-    """构造 LoRA SFT 监督的 CGSD assistant 答案。
+def format_binary_chat_answer(label: int) -> str:
+    """Build the supervised assistant answer for LoRA SFT.
 
-    assistant 回复按 Qwen chat/instruct 原生格式以 `<|im_end|>` 结束；
-    真正的分类监督信号是首个规范化答案 token `1/0`。
-    空 thinking block 属于 prompt，不属于监督答案；文档要求 loss 只覆盖
-    assistant 的分类回复部分，即规范化的 `1/0` 和 `<|im_end|>`。
-    prompt 部分在 dataset 中会统一 mask 为 -100。
+    The assistant reply ends with `<|im_end|>` following the target chat format.
+    The actual classification supervision is the first canonical answer token,
+    `1/0`. The empty thinking block belongs to the prompt, not the supervised
+    answer. Loss should cover only the assistant classification reply, namely
+    the canonical `1/0` token and `<|im_end|>`. The prompt portion is masked to
+    -100 in the dataset.
     """
     return canonical_binary_answer(label) + "<|im_end|>"
 
@@ -96,7 +101,7 @@ def discover_jsonl_files(path: str | Path) -> list[Path]:
 
 
 def _parse_label(row: dict[str, Any], label_field: str) -> int:
-    """解析支持的标签格式，并统一为 0/1。"""
+    """Parse supported label formats and normalize them to 0/1."""
     if label_field in row:
         value = row[label_field]
     elif "label" in row:
@@ -164,9 +169,10 @@ def split_examples(
     seed: int = 42,
     stratified: bool = True,
 ) -> tuple[list[PairExample], list[PairExample]]:
-    """切分训练集和验证集。
+    """Split examples into train and validation sets.
 
-    默认按标签分层，尽量保证验证集中仍包含源数据里的两类标签。
+    By default this stratifies by label so validation keeps both labels when
+    the source data contains them.
     """
     if val_ratio <= 0:
         return list(examples), []
@@ -206,10 +212,11 @@ def split_examples_three_way(
     stratified: bool = True,
     group_duplicates: bool = True,
 ) -> tuple[list[PairExample], list[PairExample], list[PairExample]]:
-    """切分训练集、验证集和测试集。
+    """Split examples into train, validation, and test sets.
 
-    默认 10% 训练、10% 验证、其余测试；除非显式关闭，否则按标签分层。
-    重复 query-document pair 会留在同一 split，避免验证/测试泄漏。
+    The default split is 10% train, 10% validation, and the remainder test. It
+    stratifies by label unless disabled explicitly. Duplicate query-document
+    pairs stay in the same split to avoid validation/test leakage.
     """
     if train_ratio <= 0:
         raise ValueError("train_ratio must be greater than 0")
@@ -355,7 +362,7 @@ def examples_from_rows(rows: list[dict[str, Any]]) -> list[PairExample]:
 
 
 class GenerationQueryDocumentDataset(Dataset):
-    """tokenized query-document 生成数据集。"""
+    """Tokenized query-document generation dataset."""
 
     def __init__(
         self,
@@ -390,12 +397,12 @@ class GenerationQueryDocumentDataset(Dataset):
                 max_length=max(self.max_length - 1, 1),
                 padding=False,
             )
-        elif self.input_format == "cgsd_chat_binary_v1":
-            # CGSD 手写 Qwen chat 模板，等价于文档中的 non-thinking mode
-            # prompt。这里禁用额外 special tokens，避免在 assistant 上下文
-            # 后插入 tokenizer 默认 BOS/EOS 破坏第一个输出 token 的位置。
+        elif self.input_format == "chat_binary":
+            # Write the chat template manually to match the documented
+            # no-thinking prompt. Extra special tokens are disabled so default
+            # BOS/EOS insertion cannot shift the first assistant output token.
             encoded = self.tokenizer(
-                format_cgsd_chat_prompt(example.query, example.document),
+                format_binary_chat_prompt(example.query, example.document),
                 truncation=True,
                 max_length=max(self.max_length - 1, 1),
                 padding=False,
@@ -416,8 +423,8 @@ class GenerationQueryDocumentDataset(Dataset):
     def _encode_example(self, example: PairExample) -> dict[str, Any]:
         prompt_ids = self._encode_prompt(example)
         answer_text = (
-            format_cgsd_chat_answer(example.label)
-            if self.input_format == "cgsd_chat_binary_v1"
+            format_binary_chat_answer(example.label)
+            if self.input_format == "chat_binary"
             else format_generation_answer(example.label)
         )
         answer_ids = self.tokenizer(
@@ -454,7 +461,7 @@ class GenerationQueryDocumentDataset(Dataset):
 
 
 class GenerationPairCollator:
-    """对生成 batch 做 padding，并附加 prompt-only 输入。"""
+    """Pad generation batches and attach prompt-only inputs."""
 
     def __init__(self, tokenizer: Any, pad_to_multiple_of: int | None = 8) -> None:
         self.tokenizer = tokenizer
@@ -515,7 +522,7 @@ class GenerationPairCollator:
 
 
 class TokenBudgetBatchSampler:
-    """按长度分组，同时限制每个 batch 的 token 预算。"""
+    """Group examples by length while enforcing a token budget per batch."""
 
     def __init__(
         self,

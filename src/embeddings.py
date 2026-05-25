@@ -1,9 +1,10 @@
-"""embedding 工件读取和覆盖校验。
+"""Embedding artifact loading and coverage checks.
 
-本模块只处理已经落盘的 embedding 工件：读取 `.npy/.npz/.json/.jsonl`
-向量文件，并用 `*.ids.jsonl` 这类 sidecar 建立样本 ID 到向量的映射。
-需要依赖 embedding 的 stage 可以调用 `assert_embedding_coverage`，在运行前确认
-每个样本 ID 都有向量且维度一致。
+This module only handles embedding artifacts that already exist on disk. It can
+read `.npy/.npz/.json/.jsonl` vector files and use sidecars such as
+`*.ids.jsonl` to map sample IDs to vectors. Stages that depend on embeddings can
+call `assert_embedding_coverage` before running to confirm that every sample ID
+has a vector with the expected dimensionality.
 """
 
 from __future__ import annotations
