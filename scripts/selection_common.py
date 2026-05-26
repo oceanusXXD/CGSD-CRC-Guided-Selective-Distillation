@@ -58,10 +58,8 @@ def _merge_by_id(rows: list[dict[str, object]]) -> dict[str, dict[str, object]]:
     return {str(row["id"]): row for row in rows}
 
 
-def _proxy_prediction(row: dict[str, object]) -> int:
-    if "prediction" in row:
-        return normalize_binary_label(row["prediction"], field_name="row prediction")
-    return 1 if float(row.get("score", 0.0) or 0.0) > 0.0 else 0
+def _selection_label(row: dict[str, object]) -> int:
+    return normalize_binary_label(row.get("label", row.get("groundtruth")), field_name="row label")
 
 
 def _routing_score(row: dict[str, object], *, temperature: float) -> float:
@@ -123,7 +121,7 @@ def _pcss_training_property_checks(
     selected_budget = len(selected_ids)
     selected_label1_count = len(selection.label1_ids)
     selected_label0_count = len(selection.label0_ids)
-    selected_proxy_label1_rate = float(selected_label1_count / selected_budget) if selected_budget else 0.0
+    selected_label1_rate = float(selected_label1_count / selected_budget) if selected_budget else 0.0
     capacity_limited = (
         int(selection.requested_label0_budget) != int(pcss_plan.target_label0_budget)
         or int(selection.requested_label1_budget) != int(pcss_plan.target_label1_budget)
@@ -140,7 +138,7 @@ def _pcss_training_property_checks(
         label: [
             sample_id
             for sample_id, row in pool_by_id.items()
-            if sample_id not in blocked_ids and _proxy_prediction(row) == label
+            if sample_id not in blocked_ids and _selection_label(row) == label
         ]
         for label in (0, 1)
     }
@@ -171,7 +169,7 @@ def _pcss_training_property_checks(
     return {
         "property_1_distribution_consistency": {
             "target_guide_label1_rate": float(pcss_plan.p_hat_1),
-            "selected_proxy_label1_rate": selected_proxy_label1_rate,
+            "selected_label1_rate": selected_label1_rate,
             "selected_label0_count": int(selected_label0_count),
             "selected_label1_count": int(selected_label1_count),
             "target_label0_budget": int(pcss_plan.target_label0_budget),
@@ -283,9 +281,9 @@ def run_selection(args: argparse.Namespace, *, method: str) -> dict[str, object]
         row["selection_method"] = method
         row["selection_side"] = "defer" if bool(row.get("defer", False)) else "accept"
         if sample_id in selected_label1_ids:
-            row["selection_stratum"] = "proxy_label_1"
+            row["selection_stratum"] = "label_1"
         elif sample_id in selected_label0_ids:
-            row["selection_stratum"] = "proxy_label_0"
+            row["selection_stratum"] = "label_0"
         row.setdefault("label", row.get("groundtruth"))
         selected_rows.append(row)
 

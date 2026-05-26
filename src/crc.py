@@ -417,7 +417,7 @@ def compute_pcss_plan(
     guide_label0_count = guide_count - guide_label1_count
     p_hat_1 = _rate(guide_label1_count, guide_count)
 
-    pool_label1_count = sum(1 for row in pool_decisions if _row_prediction(row) == 1)
+    pool_label1_count = sum(1 for row in pool_decisions if _row_label(row) == 1)
     pool_label0_count = len(pool_decisions) - pool_label1_count
     pool_defer_count = sum(1 for row in pool_decisions if bool(row.get("defer", False)))
     pool_accept_count = len(pool_decisions) - pool_defer_count
@@ -528,8 +528,8 @@ def select_training_ids(
     all_ids = _unique_ids(pool_decisions, blocked_ids=blocked)
     accept_ids = [sample_id for sample_id in all_ids if not bool(rows_by_id[sample_id].get("defer", False))]
     defer_ids = [sample_id for sample_id in all_ids if bool(rows_by_id[sample_id].get("defer", False))]
-    label0_ids = [sample_id for sample_id in all_ids if _row_prediction(rows_by_id[sample_id]) == 0]
-    label1_ids = [sample_id for sample_id in all_ids if _row_prediction(rows_by_id[sample_id]) == 1]
+    label0_ids = [sample_id for sample_id in all_ids if _row_label(rows_by_id[sample_id]) == 0]
+    label1_ids = [sample_id for sample_id in all_ids if _row_label(rows_by_id[sample_id]) == 1]
     requested_budget = int(budget)
 
     if method_name == "random":
