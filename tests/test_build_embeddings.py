@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from scripts.cgsd_build_embeddings import embed_texts_vllm
+from scripts.build_embeddings import embed_texts_vllm
 
 
 class BuildEmbeddingsTest(unittest.TestCase):

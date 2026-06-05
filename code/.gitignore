@@ -1,0 +1,7 @@
+data/
+runs/
+models/
+*.log
+*.partial.jsonl
+__pycache__/
+*.pyc

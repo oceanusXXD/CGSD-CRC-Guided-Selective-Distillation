@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.cgsd_convert_jsonl import convert_rows
+from scripts.convert_jsonl import convert_rows
 from src.data import load_examples
 
 
@@ -87,7 +87,7 @@ class DataEntrypointsTest(unittest.TestCase):
             subprocess.run(
                 [
                     sys.executable,
-                    str(PROJECT_ROOT / "scripts" / "cgsd_prepare.py"),
+                    str(PROJECT_ROOT / "scripts" / "prepare.py"),
                     "--data_path",
                     str(data_path),
                     "--output_dir",
@@ -106,14 +106,25 @@ class DataEntrypointsTest(unittest.TestCase):
                 text=True,
             )
 
-            split = json.loads((output_dir / "cgsd_split_ids.json").read_text(encoding="utf-8"))
+            split = json.loads((output_dir / "split_ids.json").read_text(encoding="utf-8"))
             self.assertEqual(2, len(split["guide_ids"]))
             self.assertEqual(1, len(split["final_ids"]))
             self.assertEqual(3, len(split["pool_ids"]))
             self.assertEqual(
-                {"guide_ids", "final_ids", "pool_ids", "n_guide", "n_final", "seed", "split_algorithm"},
+                {
+                    "guide_ids",
+                    "final_ids",
+                    "pool_ids",
+                    "n_guide",
+                    "n_final",
+                    "seed",
+                    "split_algorithm",
+                    "split_strategy",
+                    "label_distribution",
+                },
                 set(split),
             )
+            self.assertEqual("stratified", split["split_strategy"])
 
 
 if __name__ == "__main__":

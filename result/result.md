@@ -1,6 +1,6 @@
 # 结果
 
-本结果报告只围绕一个问题展开：在当前实验里，difficulty-aware sampling 到底学到了任务难度，还是主要改变了 0.6B student 的输出先验。整体结论是：对 Qwen3-0.6B non-thinking student 来说，普通二分类任务上的训练后行为主要由训练集中反向于原始预测偏置的样本数量决定；accept/defer、base-correct/base-error、hard/easy 来源本身不是稳定主因。FEVER 和 1.7B 结果显示，当 student 容量更高、原始偏置更低时，难样本选择才出现小幅正效应。
+在当前实验里，difficulty-aware sampling 到底学到了任务难度，还是主要改变了 0.6B student 的输出先验。整体结论是：对 Qwen3-0.6B non-thinking student 来说，普通二分类任务上的训练后行为主要由训练集中反向于原始预测偏置的样本数量决定；accept/defer、base-correct/base-error、hard/easy 来源本身不是稳定主因。FEVER 和 1.7B 结果显示，当 student 容量更高、原始偏置更低时，难样本选择才出现小幅正效应。
 
 ## 1. 原始预测偏置
 
@@ -224,17 +224,8 @@ TwitterHate 的最好结果只比 random 高 0.38 Macro-F1；在 round0 100% pre
 | 250 | crc-random delta | +0.05 | -1.33 | 4 |
 | 250 | random | 84.26 | 71.22 | 4 |
 
-## 6. 图
 
-- `png/round0_query_bias_profile.png`：原始标签比例与 round0 预测比例。
-
-- `png/base_correct_wrong_bias.png`：base-correct/base-wrong 控制实验中的训练 yes 与评测 pred yes。
-
-- `png/fever06b_counterexamples_vs_macro.png`：FEVER 0.6B 反偏置样本比例与 Macro-F1。
-
-- `png/fever_qwen17b_two_seed_macro.png`：FEVER 1.7B two-seed 结果。
-
-## 7. 数据文件
+## 6. 数据文件
 
 四个主表对应：
 
