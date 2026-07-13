@@ -4,10 +4,11 @@
     100
   ],
   "data_config": {
-    "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl",
-    "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/oracle_store.json",
-    "logprobs_path": "experiments/inputs/preference/helpsteer2_preference/logprobs.jsonl",
-    "prompt_clusters_path": "experiments/inputs/preference/helpsteer2_preference/prompt_clusters.jsonl",
+    "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/selection_pool.jsonl",
+    "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/selection_oracle_store.json",
+    "logprobs_path": "experiments/inputs/preference/helpsteer2_preference/selection_logprobs.jsonl",
+    "prompt_clusters_path": "experiments/inputs/preference/helpsteer2_preference/selection_prompt_clusters.jsonl",
+    "selection_group_field": "swap_pair_id",
     "active_dpo_length_normalize": true,
     "active_dpo_novelty_weight": 0.25,
     "split_manifest_path": "experiments/inputs/preference/helpsteer2_preference/split_manifest.json"
@@ -21,8 +22,15 @@
     "judge_version": "fixed-human-labels-primary"
   },
   "evaluation_config": {
-    "capability_rows_path_template": "{run_dir}/capability_rows.jsonl",
+    "aulc_rows_path_template": "{run_dir}/aulc_rows.jsonl",
+    "device": "cuda",
+    "heldout_logprobs_path_template": "{run_dir}/heldout_logprobs.jsonl",
+    "heldout_oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/heldout_oracle_store.json",
+    "heldout_pool_path": "experiments/inputs/preference/helpsteer2_preference/heldout_pool.jsonl",
     "judge_rows_path_template": "{run_dir}/judge_rows.jsonl",
+    "logprob_batch_size": 2,
+    "logprob_row_batch_size": 32,
+    "max_length": 2048,
     "preference_predictions_path_template": "{run_dir}/heldout_preference_predictions.jsonl"
   },
   "methods": [
@@ -44,17 +52,25 @@
     5
   ],
   "training_config": {
-    "batch_size": 8,
+    "batch_size": 1,
     "data_accumulation": "cumulative",
     "generation_parameters": {
       "max_new_tokens": 256,
       "temperature": 0.0
     },
-    "initialization": "pending_shared_initial_policy_qwen3_0.6b_v1",
+    "dtype": "float16",
+    "gradient_accumulation_steps": 8,
+    "gradient_checkpointing": true,
+    "initialization": "shared_initial_policy_qwen3_0.6b_seed42_v1",
+    "initial_policy_adapter_path": "experiments/inputs/preference/helpsteer2_preference/initial_policy_adapter",
     "learning_rate": 5e-6,
+    "max_length": 2048,
+    "mixed_precision": "fp16",
     "model_name_or_path": "qwen3-0.6b",
     "optimizer": "adamw",
     "prompt_format": "chatml_pairwise_v1",
+    "seed_label_count": 1000,
+    "evaluation_label_count": 2000,
     "train_token_budget": 240000,
     "update_steps": 120
   }

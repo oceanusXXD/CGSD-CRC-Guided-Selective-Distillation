@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 from typing import Any
+from urllib.request import urlopen
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -16,10 +17,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from mias_dcms.benchmark_data import (  # noqa: E402
     AG_NEWS_LABELS,
     DBPEDIA_14_LABELS,
+    TREC_LABELS,
     build_helpsteer_attribute_index,
     normalize_ag_news_row,
     normalize_dbpedia_row,
     normalize_helpsteer_preference_row,
+    normalize_trec_row,
     reservoir_sample_per_class,
 )
 from mias_dcms.algorithm_decision import recommend_algorithm_action  # noqa: E402
@@ -30,7 +33,9 @@ from mias_dcms.sampling_diagnostics import (  # noqa: E402
     preference_domain_effects,
     preference_random_baseline,
     preference_shift_report,
+    select_classification_rows,
     select_rows,
+    selector_safe_view,
     uncertainty_group_dependence_report,
 )
 from mias_dcms.benchmark_training import (  # noqa: E402
@@ -53,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     classification_download = subparsers.add_parser("download-classification")
-    classification_download.add_argument("--dataset", choices=("ag_news", "dbpedia_14"), required=True)
+    classification_download.add_argument("--dataset", choices=("ag_news", "trec", "dbpedia_14"), required=True)
     classification_download.add_argument("--output-dir", type=Path, required=True)
     classification_download.add_argument("--per-class", type=int, default=5000)
     classification_download.add_argument("--seed", type=int, default=42)
@@ -113,6 +118,11 @@ def parse_args() -> argparse.Namespace:
 
     classification_diagnostics = subparsers.add_parser("diagnose-classification")
     classification_diagnostics.add_argument("--scored-path", type=Path, required=True)
+    classification_diagnostics.add_argument(
+        "--oracle_store_path",
+        type=Path,
+        help="Optional JSON/JSONL labels keyed by id. Labels are joined only after selection for diagnostics.",
+    )
     classification_diagnostics.add_argument("--output-dir", type=Path, required=True)
     classification_diagnostics.add_argument("--budgets", default="100,500,1000")
     classification_diagnostics.add_argument("--methods", default="random,entropy,margin")
@@ -120,6 +130,12 @@ def parse_args() -> argparse.Namespace:
     classification_diagnostics.add_argument("--random-repetitions", type=int, default=1000)
     classification_diagnostics.add_argument("--dependence-permutations", type=int, default=999)
     classification_diagnostics.add_argument("--quantile-bins", type=int, default=10)
+    classification_diagnostics.add_argument("--dcms-target", choices=("uniform", "pool"), default="uniform")
+    classification_diagnostics.add_argument(
+        "--dcms-slack-grid",
+        default="0,0.01,0.02,0.05,0.1,0.2,0.5",
+    )
+    classification_diagnostics.add_argument("--dcms-kappa", type=float, default=0.05)
 
     preference_diagnostics = subparsers.add_parser("diagnose-preference")
     preference_diagnostics.add_argument("--scored-path", type=Path, required=True)
@@ -163,9 +179,13 @@ def main() -> None:
             budgets=_parse_positive_ints(args.budgets),
             methods=_parse_methods(args.methods),
             seed=args.seed,
+            oracle_store_path=args.oracle_store_path,
             random_repetitions=args.random_repetitions,
             dependence_permutations=args.dependence_permutations,
             quantile_bins=args.quantile_bins,
+            dcms_target=args.dcms_target,
+            dcms_slack_grid=_parse_nonnegative_floats(args.dcms_slack_grid),
+            dcms_kappa=args.dcms_kappa,
         )
     elif args.command == "diagnose-preference":
         diagnose_preference(
@@ -190,6 +210,11 @@ def _add_scoring_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--trust-remote-code", action="store_true")
+    parser.add_argument(
+        "--save-representations",
+        action="store_true",
+        help="Save one frozen prompt hidden representation per classification row for BADGE/GALAXY.",
+    )
 
 
 def _add_training_arguments(parser: argparse.ArgumentParser) -> None:
@@ -228,6 +253,10 @@ def download_classification_dataset(
         dataset_id = "fancyzhx/ag_news"
         config_name = None
         normalizer = normalize_ag_news_row
+    elif dataset_name == "trec":
+        dataset_id = "CogComp/trec"
+        config_name = None
+        normalizer = normalize_trec_row
     elif dataset_name == "dbpedia_14":
         dataset_id = "fancyzhx/dbpedia_14"
         config_name = "dbpedia_14"
@@ -239,10 +268,29 @@ def download_classification_dataset(
         "dataset": dataset_name,
         "source": dataset_id,
         "seed": seed,
-        "per_class": per_class if dataset_name == "dbpedia_14" else None,
+        "per_class": per_class if dataset_name in {"dbpedia_14", "trec"} else None,
         "splits": {},
     }
     for split in ("train", "test"):
+        if dataset_name == "trec":
+            normalized_rows = (
+                normalize_trec_row(row, split=split, index=index)
+                for index, row in enumerate(_download_trec_raw_rows(split))
+            )
+            rows = reservoir_sample_per_class(
+                normalized_rows,
+                per_class=per_class,
+                seed=seed,
+            )
+            output_path = output_dir / f"{split}.jsonl"
+            _write_jsonl(output_path, rows)
+            summary["splits"][split] = {
+                "path": str(output_path),
+                "size": len(rows),
+                "class_counts": _class_counts(rows),
+                "source_format": "official_trec_label_file_fallback",
+            }
+            continue
         dataset = load_dataset(dataset_id, config_name, split=split, streaming=True)
         normalized_rows = (
             normalizer(row, split=split, index=index) for index, row in enumerate(dataset)
@@ -263,6 +311,32 @@ def download_classification_dataset(
     _write_json(output_dir / "dataset_summary.json", summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
+
+
+_TREC_RAW_URLS = {
+    "train": "https://cogcomp.seas.upenn.edu/Data/QA/QC/train_5500.label",
+    "test": "https://cogcomp.seas.upenn.edu/Data/QA/QC/TREC_10.label",
+}
+
+
+def _download_trec_raw_rows(split: str) -> list[dict[str, str]]:
+    if split not in _TREC_RAW_URLS:
+        raise ValueError(f"unsupported TREC split: {split!r}")
+    rows: list[dict[str, str]] = []
+    with urlopen(_TREC_RAW_URLS[split], timeout=60) as response:
+        for raw_line in response:
+            line = raw_line.replace(b"\xf0", b" ").strip().decode("utf-8")
+            fine_label, separator, text = line.partition(" ")
+            if not separator or ":" not in fine_label:
+                raise ValueError(f"malformed TREC row in split {split!r}: {line[:120]!r}")
+            rows.append(
+                {
+                    "text": text,
+                    "coarse_label": fine_label.split(":", 1)[0],
+                    "fine_label": fine_label,
+                }
+            )
+    return rows
 
 
 def download_helpsteer2(*, output_dir: Path) -> dict[str, Any]:
@@ -331,6 +405,7 @@ def run_classification_scoring(args: argparse.Namespace) -> dict[str, Any]:
         scorer=scorer,
         row_batch_size=args.row_batch_size,
         resume=args.resume,
+        save_representations=bool(args.save_representations),
     )
     evaluated = [row for row in scored if row.get("prediction_correct") is not None]
     summary = {
@@ -485,6 +560,7 @@ def score_classification_rows(
     label_names: list[str],
     scorer: Any,
     row_batch_size: int,
+    save_representations: bool = False,
 ) -> list[dict[str, Any]]:
     if row_batch_size <= 0:
         raise ValueError("row_batch_size must be positive")
@@ -493,23 +569,36 @@ def score_classification_rows(
     for start in range(0, len(rows), row_batch_size):
         batch = rows[start : start + row_batch_size]
         messages = [build_classification_messages(str(row["text"]), label_names) for row in batch]
-        probability_rows = scorer.score_messages(messages, candidates)
+        if save_representations and hasattr(scorer, "score_messages_with_representations"):
+            probability_rows, representation_rows = scorer.score_messages_with_representations(
+                messages,
+                candidates,
+            )
+        else:
+            probability_rows = scorer.score_messages(messages, candidates)
+            representation_rows = [None for _ in batch]
         if len(probability_rows) != len(batch):
             raise ValueError("scorer returned an unexpected number of probability rows")
-        for row, probabilities in zip(batch, probability_rows, strict=True):
+        for row, probabilities, representation in zip(
+            batch,
+            probability_rows,
+            representation_rows,
+            strict=True,
+        ):
             predicted_label = max(range(len(probabilities)), key=probabilities.__getitem__)
             groundtruth = int(row["label"]) if row.get("label") is not None else None
-            scored.append(
-                {
-                    **row,
-                    "label_codes": candidates,
-                    "probabilities": [float(value) for value in probabilities],
-                    "predicted_label": predicted_label,
-                    "predicted_label_name": label_names[predicted_label],
-                    "prediction_correct": predicted_label == groundtruth if groundtruth is not None else None,
-                    **_uncertainty_fields(probabilities),
-                }
-            )
+            scored_row = {
+                **row,
+                "label_codes": candidates,
+                "probabilities": [float(value) for value in probabilities],
+                "predicted_label": predicted_label,
+                "predicted_label_name": label_names[predicted_label],
+                "prediction_correct": predicted_label == groundtruth if groundtruth is not None else None,
+                **_uncertainty_fields(probabilities),
+            }
+            if representation is not None:
+                scored_row["representation_embedding"] = [float(value) for value in representation]
+            scored.append(scored_row)
     return scored
 
 
@@ -521,6 +610,7 @@ def score_classification_to_path(
     scorer: Any | None,
     row_batch_size: int,
     resume: bool,
+    save_representations: bool = False,
 ) -> list[dict[str, Any]]:
     existing, pending = _prepare_incremental_rows(rows, output_path, resume=resume)
     if pending and scorer is None:
@@ -536,6 +626,7 @@ def score_classification_to_path(
             label_names=label_names,
             scorer=scorer,
             row_batch_size=len(batch),
+            save_representations=save_representations,
         )
         _append_jsonl(output_path, scored_batch)
         new_rows.extend(scored_batch)
@@ -627,22 +718,32 @@ def diagnose_classification(
     budgets: list[int],
     methods: list[str],
     seed: int,
+    oracle_store_path: Path | None = None,
     random_repetitions: int = 1000,
     dependence_permutations: int = 999,
     quantile_bins: int = 10,
+    dcms_target: str = "uniform",
+    dcms_slack_grid: list[float] | tuple[float, ...] = (0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5),
+    dcms_kappa: float = 0.05,
 ) -> dict[str, Any]:
     rows = _read_jsonl(scored_path)
+    audit_rows = (
+        _attach_classification_oracle(rows, _read_classification_oracle_store(oracle_store_path))
+        if oracle_store_path is not None
+        else rows
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     if budgets and max(budgets) > len(rows):
         raise ValueError(f"largest budget {max(budgets)} exceeds row count {len(rows)}")
     random_baseline = classification_random_baseline(
-        rows,
+        audit_rows,
         budgets=budgets,
         repetitions=random_repetitions,
         seed=seed,
     )
     summary: dict[str, Any] = {
         "scored_path": str(scored_path),
+        "oracle_store_path": str(oracle_store_path) if oracle_store_path is not None else None,
         "pool_size": len(rows),
         "seed": seed,
         "random_baseline": random_baseline,
@@ -651,25 +752,54 @@ def diagnose_classification(
         "method_summaries": {},
     }
     for method in methods:
-        if method != "random":
+        if method in {"entropy", "margin"}:
             summary["dependence"][method] = uncertainty_group_dependence_report(
-                rows,
+                audit_rows,
                 method=method,
                 quantile_bins=quantile_bins,
                 permutations=dependence_permutations,
                 seed=seed,
             )
+        elif method in {"badge", "galaxy"}:
+            summary["dependence"][method] = {
+                "method": method,
+                "representation_based": True,
+                "note": "selection uses frozen prompt representations; uncertainty dependence is not directly applicable",
+            }
         method_reports: dict[str, Any] = {}
+        safe_rows = selector_safe_view(rows)
+        rows_by_id = {str(row["id"]): row for row in audit_rows}
         for budget in budgets:
-            selected = select_rows(rows, method=method, budget=budget, seed=seed)
+            selected_safe, selection_metadata = select_classification_rows(
+                safe_rows,
+                method=method,
+                budget=budget,
+                seed=seed,
+                dcms_target=dcms_target,
+                dcms_slack_grid=dcms_slack_grid,
+                dcms_kappa=dcms_kappa,
+            )
+            selected = [rows_by_id[str(row["id"])] for row in selected_safe]
             _write_jsonl(output_dir / f"{method}_budget_{budget}.jsonl", selected)
             selected_ids = {str(row["id"]) for row in selected}
-            budget_report = classification_shift_report(rows, selected_ids=selected_ids)
+            budget_report = classification_shift_report(audit_rows, selected_ids=selected_ids)
             _attach_random_calibration(
                 budget_report,
                 random_baseline["budgets"][str(budget)],
                 global_max_z_q95=float(random_baseline["global_envelope"]["max_tv_z_q95"]),
             )
+            if selection_metadata is not None:
+                selection_path = output_dir / f"{method}_budget_{budget}_selection.json"
+                _write_json(selection_path, selection_metadata)
+                budget_report["dcms"] = {
+                    "target": selection_metadata["target"],
+                    "target_moments": selection_metadata["target_moments"],
+                    "utility_retained": selection_metadata["utility_retained"],
+                    "max_constraint_violation": selection_metadata["max_constraint_violation"],
+                    "selected_slack": selection_metadata["selected_slack"],
+                    "solver_status": selection_metadata["solver_status"],
+                    "selection_artifact": str(selection_path),
+                }
             method_reports[str(budget)] = budget_report
         summary["methods"][method] = method_reports
         if method != "random":
@@ -794,13 +924,19 @@ def diagnose_preference(
         "dpo_methods": {},
     }
     for method in methods:
-        selected = select_rows(rows, method=method, budget=budget, seed=seed)
+        safe_rows = selector_safe_view(rows)
+        rows_by_id = {str(row["id"]): row for row in rows}
+        selected_safe = select_rows(safe_rows, method=method, budget=budget, seed=seed)
+        selected = [rows_by_id[str(row["id"])] for row in selected_safe]
         _write_jsonl(output_dir / f"{method}_budget_{budget}.jsonl", selected)
         selected_ids = {str(row["id"]) for row in selected}
         all_pair_report = preference_shift_report(rows, selected_ids=selected_ids)
         _attach_preference_calibration(all_pair_report, random_baseline)
         summary["methods"][method] = all_pair_report
-        dpo_selected = select_rows(trainable_rows, method=method, budget=budget, seed=seed)
+        trainable_safe = selector_safe_view(trainable_rows)
+        trainable_by_id = {str(row["id"]): row for row in trainable_rows}
+        dpo_selected_safe = select_rows(trainable_safe, method=method, budget=budget, seed=seed)
+        dpo_selected = [trainable_by_id[str(row["id"])] for row in dpo_selected_safe]
         _write_jsonl(output_dir / f"{method}_dpo_budget_{budget}.jsonl", dpo_selected)
         dpo_selected_ids = {str(row["id"]) for row in dpo_selected}
         dpo_report = preference_shift_report(
@@ -857,9 +993,22 @@ def _parse_positive_ints(value: str) -> list[int]:
     return parsed
 
 
+def _parse_nonnegative_floats(value: str) -> list[float]:
+    parsed = sorted({float(item.strip()) for item in value.split(",") if item.strip()})
+    if not parsed or any(item < 0.0 for item in parsed):
+        raise ValueError("expected a comma-separated list of non-negative numbers")
+    return parsed
+
+
 def _parse_methods(value: str) -> list[str]:
-    methods = [item.strip() for item in value.split(",") if item.strip()]
-    unsupported = sorted(set(methods) - {"random", "entropy", "margin"})
+    aliases = {
+        "entropy+dcms": "entropy_dcms",
+        "badge+dcms": "badge_dcms",
+    }
+    methods = [aliases.get(item.strip().lower(), item.strip().lower()) for item in value.split(",") if item.strip()]
+    unsupported = sorted(
+        set(methods) - {"random", "entropy", "margin", "badge", "galaxy", "entropy_dcms", "badge_dcms"}
+    )
     if not methods or unsupported:
         raise ValueError(f"unsupported methods: {unsupported}")
     return methods
@@ -915,6 +1064,8 @@ def _resolve_label_names(rows: list[dict[str, Any]], explicit: str | None) -> li
         return list(AG_NEWS_LABELS)
     if dataset_name == "dbpedia_14":
         return list(DBPEDIA_14_LABELS)
+    if dataset_name == "trec":
+        return list(TREC_LABELS)
     names_by_label = {
         int(row["label"]): str(row["label_name"])
         for row in rows
@@ -976,6 +1127,49 @@ def _restore_input_order(
 def _read_gzip_jsonl(path: Path) -> list[dict[str, Any]]:
     with gzip.open(path, "rt", encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
+
+
+def _read_classification_oracle_store(path: Path) -> dict[str, dict[str, Any]]:
+    if path.suffix == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not all(isinstance(value, dict) for value in payload.values()):
+            raise ValueError("classification oracle JSON must be an object keyed by id")
+        return {str(sample_id): dict(row) for sample_id, row in payload.items()}
+    rows = _read_jsonl(path)
+    oracle: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        sample_id = row.get("id")
+        if sample_id is None:
+            raise ValueError("classification oracle JSONL rows must contain id")
+        key = str(sample_id)
+        if key in oracle:
+            raise ValueError(f"classification oracle contains duplicate id: {key!r}")
+        oracle[key] = dict(row)
+    return oracle
+
+
+def _attach_classification_oracle(
+    scored_rows: list[dict[str, Any]],
+    oracle_store: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    audit_rows: list[dict[str, Any]] = []
+    for row in scored_rows:
+        sample_id = str(row.get("id", ""))
+        if not sample_id:
+            raise ValueError("scored classification rows must contain id")
+        oracle = oracle_store.get(sample_id)
+        if oracle is None:
+            raise ValueError(f"classification oracle is missing scored id: {sample_id!r}")
+        if "label" not in oracle:
+            raise ValueError(f"classification oracle row {sample_id!r} is missing label")
+        existing_label = row.get("label")
+        if existing_label is not None and str(existing_label) != str(oracle["label"]):
+            raise ValueError(f"classification label mismatch for id: {sample_id!r}")
+        audit_rows.append({**row, "label": oracle["label"]})
+    extra_ids = sorted(set(oracle_store) - {str(row["id"]) for row in scored_rows})
+    if extra_ids:
+        raise ValueError(f"classification oracle contains ids outside scored rows: {extra_ids[:5]}")
+    return audit_rows
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

@@ -26,6 +26,16 @@ class PreparePreferenceSplitsScriptTest(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            oracle_store_path = tmp / "oracle_store.json"
+            oracle_store_path.write_text(
+                json.dumps(
+                    {
+                        f"p{i}": {"sample_id": f"p{i}", "preference_label": "A"}
+                        for i in range(10)
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             completed = subprocess.run(
                 [
@@ -45,6 +55,8 @@ class PreparePreferenceSplitsScriptTest(unittest.TestCase):
                     "2",
                     "--test_size",
                     "1",
+                    "--oracle_store_path",
+                    str(oracle_store_path),
                 ],
                 cwd=PROJECT_ROOT,
                 text=True,
@@ -63,6 +75,10 @@ class PreparePreferenceSplitsScriptTest(unittest.TestCase):
             self.assertEqual(10, summary["row_count"])
             self.assertEqual(str(output_dir / "split_manifest.json"), summary["artifacts"]["split_manifest"])
             self.assertEqual(str(output_dir / "split_summary.json"), summary["artifacts"]["split_summary"])
+            self.assertEqual(5, len((output_dir / "selection_pool.jsonl").read_text(encoding="utf-8").splitlines()))
+            self.assertEqual(5, len(json.loads((output_dir / "selection_oracle_store.json").read_text(encoding="utf-8"))))
+            seed_payload = json.loads((output_dir / "seed_selected_ids.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["seed_ids"], seed_payload["selected_ids"])
 
 
 if __name__ == "__main__":

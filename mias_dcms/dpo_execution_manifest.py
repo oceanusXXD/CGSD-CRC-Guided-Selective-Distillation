@@ -16,6 +16,7 @@ REQUIRED_DPO_EXECUTION_ARTIFACTS = (
     "selected_ids_path",
     "revealed_rows_path",
     "dpo_train_rows_path",
+    "policy_adapter_path",
     "training_summary_path",
     "evaluation_metrics_path",
     "cost_report_path",
@@ -44,10 +45,18 @@ class DPOExecutionManifestValidationReport:
 def build_dpo_execution_manifest(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     run_rows = [dict(row) for row in rows]
     manifest_runs = [_build_run_plan(row) for row in run_rows]
+    source_hashes = sorted(
+        {
+            str(row.get("source_config_sha256"))
+            for row in run_rows
+            if str(row.get("source_config_sha256") or "").strip()
+        }
+    )
     manifest = {
         "stage_order": list(DPO_EXECUTION_STAGES),
         "run_count": len(manifest_runs),
         "runs": manifest_runs,
+        "source_config_sha256": source_hashes[0] if len(source_hashes) == 1 else None,
     }
     report = validate_dpo_execution_manifest(manifest)
     return {**manifest, **report.as_dict()}
@@ -64,12 +73,16 @@ def validate_dpo_execution_manifest(manifest: Mapping[str, Any]) -> DPOExecution
         )
 
     run_ids: list[str] = []
+    source_hashes: set[str] = set()
     for run_index, run in enumerate(runs):
         if not isinstance(run, Mapping):
             issues.append({"code": "invalid_run", "run_index": run_index})
             continue
         run_id = str(run.get("run_id", ""))
         run_ids.append(run_id)
+        source_hash = str(run.get("source_config_sha256") or "").strip()
+        if source_hash:
+            source_hashes.add(source_hash)
         _validate_required_artifacts(run, run_index=run_index, run_id=run_id, issues=issues)
         if str(run.get("run_status")) == "failed":
             if not str(run.get("failure_reason", "")).strip():
@@ -99,6 +112,8 @@ def validate_dpo_execution_manifest(manifest: Mapping[str, Any]) -> DPOExecution
 
     for run_id in sorted({value for value in run_ids if run_ids.count(value) > 1}):
         issues.append({"code": "duplicate_run_id", "run_id": run_id})
+    if len(source_hashes) > 1:
+        issues.append({"code": "source_config_hash_drift", "source_config_sha256": sorted(source_hashes)})
 
     return DPOExecutionManifestValidationReport(
         run_count=len(runs),
@@ -123,6 +138,7 @@ def _build_run_plan(row: Mapping[str, Any]) -> dict[str, Any]:
         "run_status": run_status,
         "failure_reason": str(row.get("failure_reason", "")),
         "config_hash": str(row.get("config_hash", "")),
+        "source_config_sha256": str(row.get("source_config_sha256", "")),
         "training_config_hash": str(row.get("training_config_hash", "")),
         "judge_config_hash": str(row.get("judge_config_hash", "")),
         "artifacts": {**artifacts, "run_record_path": str(run_dir / "run_record.json")},
@@ -150,10 +166,11 @@ def _stages_for_run(
             "depends_on": [],
             "status": "blocked",
             "blocker": "awaiting_execution",
-            "inputs": {
-                "active_pool_path": str(data_config.get("active_pool_path") or artifacts.get("active_pool_path")),
-                "logprobs_path": str(data_config.get("logprobs_path") or artifacts.get("logprobs_path")),
-            },
+            "inputs": _selection_inputs(
+                method=method,
+                artifacts=artifacts,
+                data_config=data_config,
+            ),
             "outputs": {
                 "selected_ids_path": str(artifacts.get("selected_ids_path")),
                 "selection_summary_path": str(artifacts.get("selection_summary_path")),
@@ -211,6 +228,7 @@ def _stages_for_run(
                 "dpo_train_rows_path": str(artifacts.get("dpo_train_rows_path")),
             },
             "outputs": {
+                "policy_adapter_path": str(artifacts.get("policy_adapter_path")),
                 "training_summary_path": str(artifacts.get("training_summary_path")),
                 "cost_report_path": str(artifacts.get("cost_report_path")),
             },
@@ -229,9 +247,7 @@ def _stages_for_run(
             "status": "blocked",
             "blocker": "awaiting_training",
             "inputs": _evaluation_inputs(artifacts=artifacts, row=row),
-            "outputs": {
-                "evaluation_metrics_path": str(artifacts.get("evaluation_metrics_path")),
-            },
+            "outputs": _evaluation_outputs(artifacts=artifacts, row=row),
             "commands": _evaluation_commands(
                 artifacts=artifacts,
                 row=row,
@@ -265,6 +281,30 @@ def _stages_for_run(
     ]
 
 
+def _selection_inputs(
+    *,
+    method: str,
+    artifacts: Mapping[str, Any],
+    data_config: Mapping[str, Any],
+) -> dict[str, str]:
+    """Declare every file consumed by the generated selection command.
+
+    Random selection does not score log-probabilities, while the score-based
+    methods do.  Prompt-cluster metadata is optional but, when configured, is
+    consumed by both the Random and score-based commands and must therefore be
+    visible to the status audit.
+    """
+    inputs = {
+        "active_pool_path": str(data_config.get("active_pool_path") or artifacts.get("active_pool_path")),
+    }
+    if _normalize_method_for_command(method) != "random":
+        inputs["logprobs_path"] = str(data_config.get("logprobs_path") or artifacts.get("logprobs_path"))
+    prompt_clusters_path = str(data_config.get("prompt_clusters_path") or "").strip()
+    if prompt_clusters_path:
+        inputs["prompt_clusters_path"] = prompt_clusters_path
+    return inputs
+
+
 def _selection_commands(
     *,
     method: str,
@@ -276,24 +316,27 @@ def _selection_commands(
 ) -> list[str]:
     active_pool_path = str(data_config.get("active_pool_path") or artifacts.get("active_pool_path"))
     logprobs_path = str(data_config.get("logprobs_path") or artifacts.get("logprobs_path"))
+    selection_group_field = str(data_config.get("selection_group_field") or "").strip()
     normalized = _normalize_method_for_command(method)
     if normalized == "random":
-        return [
-            " ".join(
-                [
-                    "python",
-                    "scripts/select_preference_random.py",
-                    "--input_path",
-                    _quote(active_pool_path),
-                    "--output_dir",
-                    _quote(str(run_dir)),
-                    "--budget",
-                    str(int(budget)),
-                    "--seed",
-                    str(int(seed)),
-                ]
-            )
+        command_parts = [
+            "python",
+            "scripts/select_preference_random.py",
+            "--input_path",
+            _quote(active_pool_path),
+            "--output_dir",
+            _quote(str(run_dir)),
+            "--budget",
+            str(int(budget)),
+            "--seed",
+            str(int(seed)),
         ]
+        prompt_clusters_path = data_config.get("prompt_clusters_path")
+        if prompt_clusters_path:
+            command_parts.extend(["--metadata_path", _quote(str(prompt_clusters_path))])
+        if selection_group_field:
+            command_parts.extend(["--selection_group_field", _quote(selection_group_field)])
+        return [" ".join(command_parts)]
 
     if normalized in {"reward_margin", "apl", "active_dpo"}:
         scored_path = str(run_dir / "baseline_scores.jsonl")
@@ -303,22 +346,23 @@ def _selection_commands(
             method=normalized,
             data_config=data_config,
         )
+        select_command = [
+            "python",
+            "scripts/select_preference_baseline.py",
+            "--input_path",
+            _quote(scored_path),
+            "--output_dir",
+            _quote(str(run_dir)),
+            "--method",
+            _quote(normalized),
+            "--budget",
+            str(int(budget)),
+        ]
+        if selection_group_field:
+            select_command.extend(["--selection_group_field", _quote(selection_group_field)])
         return [
             score_command,
-            " ".join(
-                [
-                    "python",
-                    "scripts/select_preference_baseline.py",
-                    "--input_path",
-                    _quote(scored_path),
-                    "--output_dir",
-                    _quote(str(run_dir)),
-                    "--method",
-                    _quote(normalized),
-                    "--budget",
-                    str(int(budget)),
-                ]
-            ),
+            " ".join(select_command),
         ]
 
     if normalized in {"apl_dcms", "active_dpo_dcms"}:
@@ -331,43 +375,47 @@ def _selection_commands(
             method=base_method,
             data_config=data_config,
         )
+        prepare_command = [
+            "python",
+            "scripts/prepare_preference_dcms_inputs.py",
+            "--input_path",
+            _quote(scored_path),
+            "--output_path",
+            _quote(dcms_candidates_path),
+            "--method",
+            _quote(base_method),
+            "--group_fields",
+            "length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster",
+            "--audit_group_fields",
+            "length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster",
+        ]
+        if selection_group_field:
+            prepare_command.extend(["--selection_group_field", _quote(selection_group_field)])
+        dcms_command = [
+            "python",
+            "scripts/select_dcms.py",
+            "--input_path",
+            _quote(dcms_candidates_path),
+            "--output_dir",
+            _quote(str(run_dir)),
+            "--budget",
+            str(int(budget)),
+            "--target_moments",
+            "pool",
+            "--slack_grid",
+            "0,0.01,0.02,0.05,0.1,0.2,0.5",
+            "--kappa",
+            "0.05",
+            "--rounding_seed",
+            str(int(seed)),
+            "--use_rank_normalization",
+        ]
+        if selection_group_field:
+            dcms_command.extend(["--selection_group_field", _quote(selection_group_field)])
         return [
             score_command,
-            " ".join(
-                [
-                    "python",
-                    "scripts/prepare_preference_dcms_inputs.py",
-                    "--input_path",
-                    _quote(scored_path),
-                    "--output_path",
-                    _quote(dcms_candidates_path),
-                    "--method",
-                    _quote(base_method),
-                    "--group_fields",
-                    "ab_position,source_pair",
-                ]
-            ),
-            " ".join(
-                [
-                    "python",
-                    "scripts/select_dcms.py",
-                    "--input_path",
-                    _quote(dcms_candidates_path),
-                    "--output_dir",
-                    _quote(str(run_dir)),
-                    "--budget",
-                    str(int(budget)),
-                    "--target_moments",
-                    "pool",
-                    "--slack_grid",
-                    "0,0.01,0.02,0.05,0.1,0.2,0.5",
-                    "--kappa",
-                    "0.05",
-                    "--rounding_seed",
-                    str(int(seed)),
-                    "--use_rank_normalization",
-                ]
-            ),
+            " ".join(prepare_command),
+            " ".join(dcms_command),
         ]
     return [f"# unsupported selection method: {method}"]
 
@@ -390,8 +438,14 @@ def _score_preference_command(
         method,
     ]
     prompt_clusters_path = data_config.get("prompt_clusters_path")
+    active_pool_path = data_config.get("active_pool_path")
+    metadata_paths: list[str] = []
+    if active_pool_path:
+        metadata_paths.append(str(active_pool_path))
     if prompt_clusters_path:
-        parts.extend(["--metadata_path", _quote(str(prompt_clusters_path))])
+        metadata_paths.append(str(prompt_clusters_path))
+    for metadata_path in metadata_paths:
+        parts.extend(["--metadata_path", _quote(metadata_path)])
     if method == "active_dpo":
         if _as_bool(data_config.get("active_dpo_length_normalize")):
             parts.append("--active_dpo_length_normalize")
@@ -411,46 +465,71 @@ def _training_commands(
 ) -> list[str]:
     training_config = dict(row.get("training_config") or {})
     model_name = str(training_config.get("model_name_or_path") or row.get("model") or "")
-    return [
-        " ".join(
-            [
-                "python",
-                "scripts/train_preference_dpo_run.py",
-                "--dpo_train_rows_path",
-                _quote(str(artifacts.get("dpo_train_rows_path"))),
-                "--output_dir",
-                _quote(str(run_dir / "policy_adapter")),
-                "--training_summary_path",
-                _quote(str(artifacts.get("training_summary_path"))),
-                "--cost_report_path",
-                _quote(str(artifacts.get("cost_report_path"))),
-                "--model_name_or_path",
-                _quote(model_name),
-                "--training_config_json",
-                _quote(_json_arg(training_config)),
-                "--seed",
-                str(int(seed)),
-                "--method",
-                _quote(_normalize_method_for_command(method)),
-                "--budget",
-                str(int(budget)),
-            ]
-        )
+    command_parts = [
+        "python",
+        "scripts/train_preference_dpo_run.py",
+        "--dpo_train_rows_path",
+        _quote(str(artifacts.get("dpo_train_rows_path"))),
+        "--output_dir",
+        _quote(str(run_dir / "policy_adapter")),
+        "--training_summary_path",
+        _quote(str(artifacts.get("training_summary_path"))),
+        "--cost_report_path",
+        _quote(str(artifacts.get("cost_report_path"))),
+        "--model_name_or_path",
+        _quote(model_name),
+        "--training_config_json",
+        _quote(_json_arg(training_config)),
+        "--seed",
+        str(int(seed)),
+        "--method",
+        _quote(_normalize_method_for_command(method)),
+        "--budget",
+        str(int(budget)),
     ]
+    if training_config.get("seed_label_count") is not None:
+        command_parts.extend(["--seed_label_count", str(int(training_config["seed_label_count"]))])
+    return [" ".join(command_parts)]
 
 
 def _evaluation_inputs(*, artifacts: Mapping[str, Any], row: Mapping[str, Any]) -> dict[str, str]:
     evaluation_config = dict(row.get("evaluation_config") or {})
     inputs = {"training_summary_path": str(artifacts.get("training_summary_path"))}
-    for field in ("preference_predictions_path", "judge_rows_path", "capability_rows_path"):
+    for field in ("heldout_pool_path", "heldout_oracle_store_path"):
+        path = _evaluation_input_path(evaluation_config, field=field, row=row, artifacts=artifacts)
+        if path:
+            inputs[field] = path
+    for field in (
+        "preference_predictions_path",
+        "judge_rows_path",
+        "capability_rows_path",
+        "aulc_rows_path",
+    ):
         path = _evaluation_input_path(evaluation_config, field=field, row=row, artifacts=artifacts)
         if path:
             inputs[field] = path
     return inputs
 
 
+def _evaluation_outputs(*, artifacts: Mapping[str, Any], row: Mapping[str, Any]) -> dict[str, str]:
+    evaluation_config = dict(row.get("evaluation_config") or {})
+    outputs = {"evaluation_metrics_path": str(artifacts.get("evaluation_metrics_path"))}
+    for field in (
+        "heldout_logprobs_path",
+        "preference_predictions_path",
+        "judge_rows_path",
+        "capability_rows_path",
+        "aulc_rows_path",
+    ):
+        path = _evaluation_input_path(evaluation_config, field=field, row=row, artifacts=artifacts)
+        if path:
+            outputs[field] = path
+    return outputs
+
+
 def _evaluation_commands(*, artifacts: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
     evaluation_config = dict(row.get("evaluation_config") or {})
+    training_config = dict(row.get("training_config") or {})
     preference_predictions_path = _evaluation_input_path(
         evaluation_config, field="preference_predictions_path", row=row, artifacts=artifacts
     )
@@ -460,8 +539,86 @@ def _evaluation_commands(*, artifacts: Mapping[str, Any], row: Mapping[str, Any]
     capability_rows_path = _evaluation_input_path(
         evaluation_config, field="capability_rows_path", row=row, artifacts=artifacts
     )
-    if not any((preference_predictions_path, judge_rows_path, capability_rows_path)):
-        return []
+    aulc_rows_path = _evaluation_input_path(
+        evaluation_config, field="aulc_rows_path", row=row, artifacts=artifacts
+    )
+    heldout_pool_path = _evaluation_input_path(
+        evaluation_config, field="heldout_pool_path", row=row, artifacts=artifacts
+    )
+    heldout_oracle_store_path = _evaluation_input_path(
+        evaluation_config, field="heldout_oracle_store_path", row=row, artifacts=artifacts
+    )
+    heldout_logprobs_path = _evaluation_input_path(
+        evaluation_config, field="heldout_logprobs_path", row=row, artifacts=artifacts
+    )
+    commands: list[str] = []
+    if heldout_pool_path or heldout_oracle_store_path or heldout_logprobs_path:
+        if not (heldout_pool_path and heldout_oracle_store_path and heldout_logprobs_path):
+            raise ValueError(
+                "formal held-out DPO evaluation requires heldout_pool_path, "
+                "heldout_oracle_store_path, and heldout_logprobs_path"
+            )
+        model_name = str(training_config.get("model_name_or_path") or row.get("model") or "")
+        policy_adapter_path = str(artifacts.get("policy_adapter_path") or "")
+        reference_adapter_path = str(training_config.get("initial_policy_adapter_path") or "")
+        if not model_name or not policy_adapter_path or not reference_adapter_path:
+            raise ValueError(
+                "formal held-out DPO evaluation requires model_name_or_path, policy_adapter_path, "
+                "and training_config.initial_policy_adapter_path"
+            )
+        logprob_command = [
+            "python",
+            "scripts/generate_preference_logprobs.py",
+            "--input_path",
+            _quote(heldout_pool_path),
+            "--output_path",
+            _quote(heldout_logprobs_path),
+            "--summary_path",
+            _quote(str(_run_dir_from_artifacts(artifacts) / "heldout_logprobs.summary.json")),
+            "--policy_model_path",
+            _quote(model_name),
+            "--reference_model_path",
+            _quote(model_name),
+            "--policy_adapter_path",
+            _quote(policy_adapter_path),
+            "--reference_adapter_path",
+            _quote(reference_adapter_path),
+            "--batch_size",
+            str(int(evaluation_config.get("logprob_batch_size", 2))),
+            "--row_batch_size",
+            str(int(evaluation_config.get("logprob_row_batch_size", 32))),
+            "--max_length",
+            str(int(evaluation_config.get("max_length", training_config.get("max_length", 2048)))),
+            "--torch_dtype",
+            _quote(str(evaluation_config.get("torch_dtype", training_config.get("dtype", "auto")))),
+            "--resume",
+        ]
+        evaluation_device = str(evaluation_config.get("device", ""))
+        if evaluation_device:
+            logprob_command.extend(["--device", _quote(evaluation_device)])
+        commands.append(" ".join(logprob_command))
+        commands.append(
+            " ".join(
+                [
+                    "python",
+                    "scripts/materialize_preference_dpo_evaluation.py",
+                    "--heldout_pool_path",
+                    _quote(heldout_pool_path),
+                    "--heldout_oracle_store_path",
+                    _quote(heldout_oracle_store_path),
+                    "--heldout_logprobs_path",
+                    _quote(heldout_logprobs_path),
+                    "--output_dir",
+                    _quote(str(_run_dir_from_artifacts(artifacts))),
+                    "--seed_budget",
+                    str(int(training_config.get("seed_label_count", 0))),
+                    "--active_budget",
+                    str(int(row.get("budget", 0))),
+                ]
+            )
+        )
+    if not any((preference_predictions_path, judge_rows_path, capability_rows_path, aulc_rows_path)):
+        return commands
     command = [
         "python",
         "scripts/audit_preference_evaluation.py",
@@ -474,7 +631,10 @@ def _evaluation_commands(*, artifacts: Mapping[str, Any], row: Mapping[str, Any]
         command.extend(["--judge_rows_path", _quote(judge_rows_path)])
     if capability_rows_path:
         command.extend(["--capability_rows_path", _quote(capability_rows_path)])
-    return [" ".join(command)]
+    if aulc_rows_path:
+        command.extend(["--aulc_rows_path", _quote(aulc_rows_path)])
+    commands.append(" ".join(command))
+    return commands
 
 
 def _evaluation_input_path(

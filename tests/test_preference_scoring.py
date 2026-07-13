@@ -25,6 +25,13 @@ class PreferenceScoringTest(unittest.TestCase):
         self.assertAlmostEqual(0.20, scores["confident"])
         self.assertAlmostEqual(1.00, scores["tie"])
 
+    def test_reward_margin_prefers_implicit_reward_gap_when_available(self) -> None:
+        scores = reward_margin_scores([
+            {"sample_id": "implicit", "implicit_reward_gap": 0.0, "probability_response_1": 0.99},
+        ])
+
+        self.assertAlmostEqual(1.0, scores["implicit"])
+
     def test_apl_scores_combine_preference_uncertainty_with_prompt_entropy(self) -> None:
         rows = [
             {
@@ -94,6 +101,21 @@ class PreferenceScoringTest(unittest.TestCase):
         self.assertAlmostEqual(0.5, scores["short_pair"])
         self.assertAlmostEqual(0.15, scores["long_pair"])
         self.assertGreater(scores["short_pair"], scores["long_pair"])
+
+    def test_active_dpo_accepts_logprob_generator_token_count_schema(self) -> None:
+        rows = [
+            {
+                "sample_id": "generated",
+                "policy_logprob_gap": 2.0,
+                "reference_logprob_gap": 0.0,
+                "response_1_token_count": 4,
+                "response_2_token_count": 6,
+            }
+        ]
+
+        scores = active_dpo_scores(rows, length_normalize=True)
+
+        self.assertAlmostEqual(0.2, scores["generated"])
 
     def test_active_dpo_rows_include_fixed_pool_adaptation_components(self) -> None:
         rows = [

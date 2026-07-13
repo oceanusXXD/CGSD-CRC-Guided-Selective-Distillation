@@ -7,6 +7,7 @@ from mias_dcms.experiment_run_matrix import (
     REQUIRED_JUDGE_CONFIG_FIELDS,
     REQUIRED_TRAINING_CONFIG_FIELDS,
     build_experiment_run_matrix,
+    config_payload_sha256,
     validate_experiment_run_matrix,
 )
 
@@ -59,6 +60,7 @@ class ExperimentRunMatrixTest(unittest.TestCase):
                 "selected_ids_path",
                 "revealed_rows_path",
                 "dpo_train_rows_path",
+                "policy_adapter_path",
                 "training_summary_path",
                 "evaluation_metrics_path",
                 "cost_report_path",
@@ -145,6 +147,38 @@ class ExperimentRunMatrixTest(unittest.TestCase):
                 judge_config=_judge_config(),
                 data_config={},
             )
+
+    def test_validation_rejects_run_matrix_from_a_different_source_config(self) -> None:
+        source_config = {
+            "datasets": ["helpsteer2"],
+            "models": ["qwen-0.6b"],
+            "budget": 100,
+        }
+        rows = build_experiment_run_matrix(
+            datasets=["helpsteer2"],
+            models=["qwen-0.6b"],
+            budgets=[100],
+            seeds=[1],
+            artifact_root="experiments/runs/dpo_main",
+            training_config=_training_config(),
+            judge_config=_judge_config(),
+            data_config={},
+            methods=["Random"],
+            source_config_sha256=config_payload_sha256(source_config),
+        )
+
+        report = validate_experiment_run_matrix(
+            rows,
+            expected_datasets=["helpsteer2"],
+            expected_models=["qwen-0.6b"],
+            expected_budgets=[100],
+            expected_seeds=[1],
+            expected_methods=["Random"],
+            expected_source_config_sha256=config_payload_sha256({**source_config, "budget": 200}),
+        )
+
+        self.assertFalse(report.is_ready)
+        self.assertIn("source_config_hash_mismatch", {issue["code"] for issue in report.issues})
 
         judge_config = _judge_config()
         judge_config.pop(REQUIRED_JUDGE_CONFIG_FIELDS[0])

@@ -11,8 +11,11 @@ class DPOExecutionStatusTest(unittest.TestCase):
     def test_marks_completed_stages_and_next_blocker_from_existing_artifacts(self) -> None:
         manifest = build_dpo_execution_manifest(_run_matrix())
         existing = {
+            manifest["runs"][0]["stages"][0]["inputs"]["active_pool_path"],
             manifest["runs"][0]["artifacts"]["selected_ids_path"],
             manifest["runs"][0]["artifacts"]["selection_summary_path"],
+            manifest["runs"][0]["stages"][1]["inputs"]["active_pool_path"],
+            manifest["runs"][0]["stages"][1]["inputs"]["oracle_store_path"],
             manifest["runs"][0]["artifacts"]["revealed_rows_path"],
             manifest["runs"][0]["artifacts"]["dpo_train_rows_path"],
         }
@@ -34,6 +37,7 @@ class DPOExecutionStatusTest(unittest.TestCase):
         self.assertEqual(
             [
                 "experiments/runs/dpo_main/helpsteer2/qwen-0.6b/budget_100/seed_1/Random/cost_report.json",
+                "experiments/runs/dpo_main/helpsteer2/qwen-0.6b/budget_100/seed_1/Random/policy_adapter",
                 "experiments/runs/dpo_main/helpsteer2/qwen-0.6b/budget_100/seed_1/Random/training_summary.json",
             ],
             report.runs[0]["stages"][2]["missing_outputs"],
@@ -44,6 +48,7 @@ class DPOExecutionStatusTest(unittest.TestCase):
         first = manifest["runs"][0]
         existing = set()
         for stage in first["stages"]:
+            existing.update(str(path) for path in stage["inputs"].values())
             existing.update(str(path) for path in stage["outputs"].values())
 
         report = audit_dpo_execution_status({"runs": [first]}, existing_paths=existing)
@@ -52,6 +57,25 @@ class DPOExecutionStatusTest(unittest.TestCase):
         self.assertEqual(1, report.completed_run_count)
         self.assertIsNone(report.runs[0]["next_stage"])
         self.assertTrue(all(stage["status"] == "complete" for stage in report.runs[0]["stages"]))
+
+    def test_downstream_artifacts_do_not_bypass_missing_dependencies(self) -> None:
+        manifest = build_dpo_execution_manifest(_run_matrix())
+        # Use a score-based method: its log-probability input belongs only to
+        # selection, so downstream artifacts cannot accidentally satisfy it.
+        first = manifest["runs"][1]
+        existing = set()
+        for stage in first["stages"][1:]:
+            existing.update(str(path) for path in stage["inputs"].values())
+            existing.update(str(path) for path in stage["outputs"].values())
+
+        report = audit_dpo_execution_status({"runs": [first]}, existing_paths=existing)
+
+        stages = report.runs[0]["stages"]
+        self.assertEqual("blocked", stages[0]["status"])
+        self.assertEqual("blocked", stages[1]["status"])
+        self.assertEqual("awaiting_selection", stages[1]["blocker"])
+        self.assertEqual("blocked", stages[2]["status"])
+        self.assertEqual("awaiting_reveal", stages[2]["blocker"])
 
     def test_preserves_failed_run_reason_and_reports_missing_reason(self) -> None:
         rows = _run_matrix()

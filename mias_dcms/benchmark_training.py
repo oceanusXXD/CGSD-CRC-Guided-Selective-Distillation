@@ -75,6 +75,8 @@ class LoraTrainingConfig:
     seed: int = 42
     num_workers: int = 0
     beta: float = 0.1
+    update_steps: int | None = None
+    initial_policy_adapter_path: str | None = None
 
 
 class ClassificationSFTDataset(Dataset[dict[str, list[int]]]):
@@ -288,7 +290,7 @@ def _collate_dpo(
 
 
 def _load_lora_policy(config: LoraTrainingConfig) -> tuple[Any, Any]:
-    from peft import LoraConfig, TaskType, get_peft_model
+    from peft import LoraConfig, PeftModel, TaskType, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
@@ -302,6 +304,17 @@ def _load_lora_policy(config: LoraTrainingConfig) -> tuple[Any, Any]:
     model.config.use_cache = False
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()
+    if config.initial_policy_adapter_path:
+        policy_path = Path(config.initial_policy_adapter_path)
+        if not policy_path.is_dir():
+            raise FileNotFoundError(
+                f"initial policy adapter directory does not exist: {policy_path}"
+            )
+        return tokenizer, PeftModel.from_pretrained(
+            model,
+            policy_path,
+            is_trainable=True,
+        )
     lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=config.lora_r,
@@ -343,7 +356,7 @@ def _run_sft_loop(*, model: Any, tokenizer: Any, dataloader: DataLoader, config:
         weight_decay=config.weight_decay,
     )
     update_steps_per_epoch = math.ceil(len(dataloader) / config.gradient_accumulation_steps)
-    total_steps = max(1, update_steps_per_epoch * config.epochs)
+    total_steps = int(config.update_steps or max(1, update_steps_per_epoch * config.epochs))
     scheduler = get_scheduler(
         "linear",
         optimizer=optimizer,
@@ -356,7 +369,10 @@ def _run_sft_loop(*, model: Any, tokenizer: Any, dataloader: DataLoader, config:
     losses: list[float] = []
     model.train()
     optimizer.zero_grad()
-    for _ in range(config.epochs):
+    completed_steps = 0
+    epoch = 0
+    while completed_steps < total_steps:
+        epoch += 1
         for batch in dataloader:
             with accelerator.accumulate(model):
                 loss = model(**batch).loss
@@ -367,10 +383,14 @@ def _run_sft_loop(*, model: Any, tokenizer: Any, dataloader: DataLoader, config:
                 scheduler.step()
                 optimizer.zero_grad()
             losses.append(float(loss.detach().float().item()))
+            if accelerator.sync_gradients:
+                completed_steps += 1
+                if completed_steps >= total_steps:
+                    break
     _save_adapter(accelerator=accelerator, model=model, tokenizer=tokenizer, output_dir=config.output_dir)
     return {
-        "epochs": config.epochs,
-        "optimizer_steps": total_steps,
+        "epochs": epoch,
+        "optimizer_steps": completed_steps,
         "mean_train_loss": sum(losses) / len(losses),
         "model_name_or_path": config.model_name_or_path,
     }
@@ -398,7 +418,7 @@ def _run_dpo_loop(
         weight_decay=config.weight_decay,
     )
     update_steps_per_epoch = math.ceil(len(dataloader) / config.gradient_accumulation_steps)
-    total_steps = max(1, update_steps_per_epoch * config.epochs)
+    total_steps = int(config.update_steps or max(1, update_steps_per_epoch * config.epochs))
     scheduler = get_scheduler(
         "linear",
         optimizer=optimizer,
@@ -413,9 +433,16 @@ def _run_dpo_loop(
     optimizer.zero_grad()
     losses: list[float] = []
     accuracies: list[float] = []
-    for _ in range(config.epochs):
+    completed_steps = 0
+    epoch = 0
+    processed_pair_count = 0
+    processed_input_tokens = 0
+    while completed_steps < total_steps:
+        epoch += 1
         for batch in dataloader:
             pair_count = int(batch.pop("pair_count").item())
+            processed_pair_count += pair_count
+            processed_input_tokens += int(batch["attention_mask"].sum().detach().item())
             with accelerator.accumulate(policy):
                 policy_output = policy(
                     input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]
@@ -453,6 +480,10 @@ def _run_dpo_loop(
             accuracies.append(
                 float((policy_scores[:pair_count] > policy_scores[pair_count:]).float().mean().item())
             )
+            if accelerator.sync_gradients:
+                completed_steps += 1
+                if completed_steps >= total_steps:
+                    break
     _save_adapter(
         accelerator=accelerator,
         model=policy,
@@ -460,10 +491,12 @@ def _run_dpo_loop(
         output_dir=config.output_dir,
     )
     return {
-        "epochs": config.epochs,
-        "optimizer_steps": total_steps,
+        "epochs": epoch,
+        "optimizer_steps": completed_steps,
         "mean_train_loss": sum(losses) / len(losses),
         "mean_policy_preference_accuracy": sum(accuracies) / len(accuracies),
+        "processed_pair_count": processed_pair_count,
+        "processed_input_tokens": processed_input_tokens,
         "model_name_or_path": config.model_name_or_path,
     }
 

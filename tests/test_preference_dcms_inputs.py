@@ -75,6 +75,25 @@ class PreferenceDCMSInputsTest(unittest.TestCase):
 
         self.assertEqual({"cluster_a": 0.8, "cluster_b": 0.2}, candidates[0]["groups"])
 
+    def test_preserves_explicit_selection_group_for_one_per_pair_dcms(self) -> None:
+        candidates = build_preference_dcms_candidate_rows(
+            [
+                {
+                    "sample_id": "pair:original",
+                    "swap_pair_id": "pair",
+                    "apl_score": 0.3,
+                    "length_gap_bin": "balanced",
+                }
+            ],
+            method="apl",
+            group_fields=("length_gap_bin",),
+            selection_group_field="swap_pair_id",
+            audit_group_fields=("length_gap_bin",),
+        )
+
+        self.assertEqual("pair", candidates[0]["swap_pair_id"])
+        self.assertEqual("balanced", candidates[0]["length_gap_bin"])
+
     def test_rejects_hidden_preference_labels_before_building_candidates(self) -> None:
         rows = [
             {

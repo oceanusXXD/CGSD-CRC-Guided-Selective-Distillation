@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preference_predictions_path", type=Path)
     parser.add_argument("--judge_rows_path", type=Path)
     parser.add_argument("--capability_rows_path", type=Path)
+    parser.add_argument("--aulc_rows_path", type=Path)
     parser.add_argument("--group_field", default="observable_group")
     parser.add_argument("--length_bin_field", default="length_gap_bin")
     parser.add_argument("--label_field", default="oracle_preference")
@@ -44,10 +45,12 @@ def main() -> None:
         if args.capability_rows_path is not None
         else None
     )
+    aulc_rows = read_jsonl(args.aulc_rows_path) if args.aulc_rows_path is not None else None
     metrics = build_preference_evaluation_metrics(
         preference_rows=preference_rows,
         judge_rows=judge_rows,
         capability_rows=capability_rows,
+        aulc_rows=aulc_rows,
         group_field=str(args.group_field),
         length_bin_field=str(args.length_bin_field),
         label_field=str(args.label_field),
@@ -67,6 +70,9 @@ def main() -> None:
                 else None,
                 "capability_rows_path": str(args.capability_rows_path)
                 if args.capability_rows_path is not None
+                else None,
+                "aulc_rows_path": str(args.aulc_rows_path)
+                if args.aulc_rows_path is not None
                 else None,
             },
             "fields": {

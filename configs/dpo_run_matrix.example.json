@@ -19,6 +19,7 @@
     "judge_version": "fixed-human-labels-primary"
   },
   "evaluation_config": {
+    "aulc_rows_path_template": "{run_dir}/aulc_rows.jsonl",
     "capability_rows_path_template": "{run_dir}/capability_rows.jsonl",
     "judge_rows_path_template": "{run_dir}/judge_rows.jsonl",
     "preference_predictions_path_template": "{run_dir}/heldout_preference_predictions.jsonl"
@@ -49,6 +50,7 @@
       "temperature": 0.0
     },
     "initialization": "shared_seed_policy_v1",
+    "initial_policy_adapter_path": "experiments/inputs/preference/initial_policy_adapter",
     "learning_rate": 5e-6,
     "model_name_or_path": "qwen-0.6b",
     "optimizer": "adamw",

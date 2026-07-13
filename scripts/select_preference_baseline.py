@@ -10,7 +10,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from mias_dcms.selectors import assert_selector_rows_are_label_safe, select_top_budget
+from mias_dcms.selectors import (
+    assert_selector_rows_are_label_safe,
+    select_top_budget,
+    select_top_budget_by_group,
+)
+from mias_dcms.preference_selection_metrics import (
+    build_preference_selection_metrics,
+    materialize_preference_group_fields,
+    utility_retained_from_scores,
+)
 from mias_dcms.utils import read_jsonl, write_json, write_jsonl
 
 
@@ -24,6 +33,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--budget", type=int, required=True)
     parser.add_argument("--id_field", default="sample_id")
     parser.add_argument("--score_field")
+    parser.add_argument(
+        "--selection_group_field",
+        default="",
+        help="Optional observable field that may contribute at most one selected row per group.",
+    )
     return parser.parse_args()
 
 
@@ -36,11 +50,24 @@ def main() -> None:
     score_field = str(args.score_field or f"{method}_score")
     sample_ids = [str(row[args.id_field]) for row in rows]
     scores = [_score_from_row(row, method=method, score_field=score_field) for row in rows]
-    selected_ids = select_top_budget(sample_ids=sample_ids, scores=scores, budget=int(args.budget))
+    selection_group_field = str(args.selection_group_field).strip()
+    if selection_group_field:
+        group_ids = [str(row.get(selection_group_field, "")) for row in rows]
+        if any(not group_id for group_id in group_ids):
+            raise ValueError(f"rows are missing selection group field {selection_group_field!r}")
+        selected_ids = select_top_budget_by_group(
+            sample_ids=sample_ids,
+            scores=scores,
+            group_ids=group_ids,
+            budget=int(args.budget),
+        )
+    else:
+        selected_ids = select_top_budget(sample_ids=sample_ids, scores=scores, budget=int(args.budget))
     selected_id_set = set(selected_ids)
 
     membership_rows = [
         {
+            **materialize_preference_group_fields(row),
             str(args.id_field): sample_id,
             "sample_id": sample_id,
             "method": method,
@@ -48,7 +75,7 @@ def main() -> None:
             "score": score,
             "selected": int(sample_id in selected_id_set),
         }
-        for sample_id, score in zip(sample_ids, scores, strict=True)
+        for row, sample_id, score in zip(rows, sample_ids, scores, strict=True)
     ]
     summary = {
         "input_path": str(args.input_path),
@@ -56,9 +83,20 @@ def main() -> None:
         "score_field": score_field,
         "budget": int(args.budget),
         "pool_size": len(rows),
+        "selection_group_field": selection_group_field or None,
         "selected_count": len(selected_ids),
         "selected_score_min": min((row["score"] for row in membership_rows if row["selected"]), default=None),
         "selected_score_max": max((row["score"] for row in membership_rows if row["selected"]), default=None),
+        "selection_metrics": build_preference_selection_metrics(
+            membership_rows,
+            method=method,
+            score_field=score_field,
+            utility_retained=utility_retained_from_scores(
+                membership_rows,
+                selected_ids=selected_ids,
+                score_field="score",
+            ),
+        ),
     }
     selected_payload = {
         "selected_ids": selected_ids,
@@ -66,6 +104,7 @@ def main() -> None:
         "selected_count": len(selected_ids),
         "method": method,
         "score_field": score_field,
+        "selection_group_field": selection_group_field or None,
     }
 
     output_dir = args.output_dir

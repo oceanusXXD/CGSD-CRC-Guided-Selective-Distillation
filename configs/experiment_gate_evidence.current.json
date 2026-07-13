@@ -1,6 +1,7 @@
 {
-  "protocol.freeze": "configs/mias_dcms_freeze.v1.json",
+  "dpo.initial_policy_checkpoint": "experiments/inputs/preference/helpsteer2_preference/initial_policy_checkpoint_manifest.json",
   "preference.active_pool": "experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl",
   "preference.oracle_store": "experiments/inputs/preference/helpsteer2_preference/oracle_store.json",
-  "preference.split_manifest": "experiments/inputs/preference/helpsteer2_preference/split_manifest.json"
+  "preference.split_manifest": "experiments/inputs/preference/helpsteer2_preference/split_manifest.json",
+  "protocol.freeze": "configs/mias_dcms_freeze.v1.json"
 }

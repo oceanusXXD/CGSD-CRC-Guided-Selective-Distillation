@@ -14,10 +14,20 @@ def reward_margin_scores(
     rows: Iterable[Mapping[str, Any]],
     *,
     probability_field: str = "probability_response_1",
+    implicit_gap_field: str = "implicit_reward_gap",
     id_field: str = "sample_id",
 ) -> dict[str, float]:
     return {
-        _row_id(row, id_field=id_field): 1.0 - abs(2.0 * _probability(row, probability_field) - 1.0)
+        _row_id(row, id_field=id_field): 1.0
+        - abs(
+            2.0
+            * _probability_or_implicit_gap(
+                row,
+                probability_field=probability_field,
+                implicit_gap_field=implicit_gap_field,
+            )
+            - 1.0
+        )
         for row in rows
     }
 
@@ -29,13 +39,20 @@ def apl_scores(
     prompt_cluster_probabilities_field: str = "prompt_cluster_probabilities",
     prompt_entropy_field: str = "prompt_entropy",
     prompt_entropy_weight: float = 1.0,
+    implicit_gap_field: str = "implicit_reward_gap",
     id_field: str = "sample_id",
 ) -> dict[str, float]:
     if prompt_entropy_weight < 0.0:
         raise ValueError("prompt_entropy_weight must be non-negative")
-    margin = reward_margin_scores(rows, probability_field=probability_field, id_field=id_field)
+    source_rows = [dict(row) for row in rows]
+    margin = reward_margin_scores(
+        source_rows,
+        probability_field=probability_field,
+        implicit_gap_field=implicit_gap_field,
+        id_field=id_field,
+    )
     scores: dict[str, float] = {}
-    for row in rows:
+    for row in source_rows:
         sample_id = _row_id(row, id_field=id_field)
         prompt_entropy = _prompt_entropy(
             row,
@@ -235,6 +252,18 @@ def _probability(row: Mapping[str, Any], field: str) -> float:
     return probability
 
 
+def _probability_or_implicit_gap(
+    row: Mapping[str, Any],
+    *,
+    probability_field: str,
+    implicit_gap_field: str,
+) -> float:
+    if implicit_gap_field in row and row[implicit_gap_field] is not None:
+        gap = float(row[implicit_gap_field])
+        return 1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, gap))))
+    return _probability(row, probability_field)
+
+
 def _prompt_entropy(
     row: Mapping[str, Any],
     *,
@@ -289,14 +318,37 @@ def _pair_token_count(
     response_1_field: str,
     response_2_field: str,
 ) -> float:
-    missing = [
-        field for field in (response_1_field, response_2_field) if field not in row or row[field] is None
-    ]
-    if missing:
+    response_1_value, response_1_source = _first_available(
+        row,
+        (response_1_field, "response_1_token_count", "token_count_response_1"),
+    )
+    response_2_value, response_2_source = _first_available(
+        row,
+        (response_2_field, "response_2_token_count", "token_count_response_2"),
+    )
+    if response_1_source is None or response_2_source is None:
+        missing = [
+            field
+            for field, source in (
+                (response_1_field, response_1_source),
+                (response_2_field, response_2_source),
+            )
+            if source is None
+        ]
         raise ValueError(
             f"row {_row_id(row, id_field='sample_id')!r} is missing token count fields: {missing}"
         )
-    token_count = float(row[response_1_field]) + float(row[response_2_field])
+    token_count = float(response_1_value) + float(response_2_value)
     if token_count <= 0.0:
         raise ValueError("pair token count must be positive")
     return token_count
+
+
+def _first_available(
+    row: Mapping[str, Any],
+    fields: Sequence[str],
+) -> tuple[Any, str | None]:
+    for field in fields:
+        if field in row and row[field] is not None:
+            return row[field], field
+    return None, None

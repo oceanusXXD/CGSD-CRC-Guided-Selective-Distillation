@@ -36,7 +36,7 @@ class SoftGroupErrorAuditTest(unittest.TestCase):
             ],
             budget=2,
             target_moments={"A": 0.5},
-            tolerance=0.0,
+            tolerance=0.1,
         )
 
         self.assertEqual(["s1", "s2"], audit.nominal.selected_ids)

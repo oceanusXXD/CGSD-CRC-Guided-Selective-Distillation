@@ -22,15 +22,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--summary_path", type=Path)
     parser.add_argument("--method", required=True)
     parser.add_argument("--group_fields", default="")
+    parser.add_argument(
+        "--audit_group_fields",
+        default="",
+        help="Optional comma-separated categorical fields to retain for post-selection metrics.",
+    )
     parser.add_argument("--group_field")
     parser.add_argument("--id_field", default="sample_id")
     parser.add_argument("--score_field")
+    parser.add_argument(
+        "--selection_group_field",
+        default="",
+        help="Optional observable field to preserve for one-per-group DCMS selection.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     group_fields = tuple(field.strip() for field in str(args.group_fields).split(",") if field.strip())
+    audit_group_fields = tuple(
+        field.strip() for field in str(args.audit_group_fields).split(",") if field.strip()
+    )
     rows = read_jsonl(args.input_path)
     candidates = build_preference_dcms_candidate_rows(
         rows,
@@ -39,6 +52,8 @@ def main() -> None:
         group_field=args.group_field,
         id_field=str(args.id_field),
         score_field=args.score_field,
+        selection_group_field=str(args.selection_group_field).strip() or None,
+        audit_group_fields=audit_group_fields,
     )
     write_jsonl(candidates, args.output_path)
 
@@ -53,6 +68,8 @@ def main() -> None:
             "score_field": score_field,
             "group_field": args.group_field,
             "group_fields": list(group_fields),
+            "audit_group_fields": list(audit_group_fields),
+            "selection_group_field": str(args.selection_group_field).strip() or None,
         },
         summary_path,
     )

@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from mias_dcms.preference_pool import length_gap_bin, normalized_response_length_gap
+from mias_dcms.preference_selection_metrics import materialize_preference_group_fields
 from mias_dcms.selectors import assert_selector_rows_are_label_safe
 
 
@@ -14,6 +16,8 @@ def build_preference_dcms_candidate_rows(
     group_field: str | None = None,
     id_field: str = "sample_id",
     score_field: str | None = None,
+    selection_group_field: str | None = None,
+    audit_group_fields: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     source_rows = [dict(row) for row in rows]
     assert_selector_rows_are_label_safe(source_rows)
@@ -25,15 +29,25 @@ def build_preference_dcms_candidate_rows(
     candidates: list[dict[str, Any]] = []
     for row in source_rows:
         sample_id = _row_id(row, id_field=id_field)
-        candidates.append(
-            {
-                "sample_id": sample_id,
-                "score": _score(row, score_field=resolved_score_field, method=normalized_method),
-                "method": normalized_method,
-                "source_score_field": resolved_score_field,
-                "groups": _groups(row, group_field=group_field, group_fields=group_fields),
-            }
-        )
+        candidate = {
+            "sample_id": sample_id,
+            "score": _score(row, score_field=resolved_score_field, method=normalized_method),
+            "method": normalized_method,
+            "source_score_field": resolved_score_field,
+            "groups": _groups(row, group_field=group_field, group_fields=group_fields),
+        }
+        if selection_group_field:
+            group_value = row.get(selection_group_field)
+            if group_value is None or not str(group_value):
+                raise ValueError(
+                    f"row {sample_id!r} is missing selection group field {selection_group_field!r}"
+                )
+            candidate[str(selection_group_field)] = str(group_value)
+        materialized = materialize_preference_group_fields(row, group_fields=audit_group_fields)
+        for field in audit_group_fields:
+            if field in materialized and materialized[field] is not None:
+                candidate[str(field)] = materialized[field]
+        candidates.append(candidate)
     return candidates
 
 
@@ -82,8 +96,25 @@ def _groups(
 
     groups: dict[str, float] = {}
     for field in group_fields:
-        if field not in row:
-            sample_id = row.get("sample_id", row.get("id", "<unknown>"))
-            raise ValueError(f"row {sample_id!r} is missing group field {field!r}")
-        groups[f"{field}={row[field]}"] = 1.0
+        value = _derived_group_value(row, field)
+        groups[f"{field}={value}"] = 1.0
     return groups
+
+
+def _derived_group_value(row: Mapping[str, Any], field: str) -> str:
+    if field in row and row[field] is not None:
+        return str(row[field])
+    if field == "length_gap_bin":
+        if "length_gap" in row and row["length_gap"] is not None:
+            return length_gap_bin(float(row["length_gap"]))
+        if "response_a" in row and "response_b" in row:
+            gap = normalized_response_length_gap(str(row["response_a"]), str(row["response_b"]))
+            return length_gap_bin(gap)
+    if field in {"length_by_prompt_cluster", "length_gap_by_prompt_cluster"}:
+        length_value = _derived_group_value(row, "length_gap_bin")
+        prompt_value = _derived_group_value(row, "prompt_cluster")
+        return f"{length_value}|{prompt_value}"
+    if field == "prompt_cluster" and row.get("prompt_cluster_id") is not None:
+        return str(row["prompt_cluster_id"])
+    sample_id = row.get("sample_id", row.get("id", "<unknown>"))
+    raise ValueError(f"row {sample_id!r} is missing group field {field!r}")

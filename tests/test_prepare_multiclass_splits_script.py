@@ -60,6 +60,17 @@ class PrepareMulticlassSplitsScriptTest(unittest.TestCase):
             self.assertEqual(12, prior["total_count"])
             self.assertEqual(12, summary["row_count"])
             self.assertEqual("label", summary["label_field"])
+            active_rows = [
+                json.loads(line)
+                for line in (output_dir / "active_pool.jsonl").read_text(encoding="utf-8").splitlines()
+                if line
+            ]
+            oracle_store = json.loads((output_dir / "active_oracle_store.json").read_text(encoding="utf-8"))
+            self.assertEqual(5, len(active_rows))
+            self.assertTrue(all("label" not in row for row in active_rows))
+            self.assertEqual(5, len(oracle_store))
+            self.assertTrue((output_dir / "seed_rows.jsonl").exists())
+            self.assertTrue((output_dir / "test_rows.jsonl").exists())
 
 
 if __name__ == "__main__":

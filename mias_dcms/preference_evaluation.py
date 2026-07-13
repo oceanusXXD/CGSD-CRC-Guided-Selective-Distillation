@@ -83,11 +83,50 @@ def capability_regression(
     return _mean([float(row[baseline_field]) - float(row[policy_field]) for row in row_list])
 
 
+def area_under_learning_curve(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    x_field: str = "budget",
+    y_field: str = "performance",
+) -> float:
+    """Return a normalized trapezoidal area for a budget/performance curve.
+
+    AULC is defined over the observed budget range. With one point, the point's
+    performance is returned; with repeated budgets, the best value at each
+    budget is used only after requiring a deterministic ordering.
+    """
+    row_list = list(rows)
+    if not row_list:
+        raise ValueError("AULC rows must not be empty")
+    points = sorted(
+        (float(row[x_field]), float(row[y_field])) for row in row_list
+    )
+    collapsed: dict[float, float] = {}
+    for budget, performance in points:
+        collapsed[budget] = max(float(performance), collapsed.get(budget, float("-inf")))
+    curve = sorted(collapsed.items())
+    if len(curve) == 1:
+        return curve[0][1]
+    x_values = [point[0] for point in curve]
+    y_values = [point[1] for point in curve]
+    width = x_values[-1] - x_values[0]
+    if width <= 0.0:
+        return _mean(y_values)
+    area = sum(
+        (x_values[index] - x_values[index - 1])
+        * (y_values[index] + y_values[index - 1])
+        / 2.0
+        for index in range(1, len(curve))
+    )
+    return area / width
+
+
 def build_preference_evaluation_metrics(
     *,
     preference_rows: Iterable[Mapping[str, Any]] | None = None,
     judge_rows: Iterable[Mapping[str, Any]] | None = None,
     capability_rows: Iterable[Mapping[str, Any]] | None = None,
+    aulc_rows: Iterable[Mapping[str, Any]] | None = None,
     group_field: str = "observable_group",
     length_bin_field: str = "length_gap_bin",
     label_field: str = "oracle_preference",
@@ -95,6 +134,8 @@ def build_preference_evaluation_metrics(
     win_field: str = "judge_win",
     baseline_field: str = "baseline_score",
     policy_field: str = "policy_score",
+    aulc_x_field: str = "budget",
+    aulc_y_field: str = "performance",
 ) -> dict[str, float | int]:
     metrics: dict[str, float | int] = {}
 
@@ -134,6 +175,15 @@ def build_preference_evaluation_metrics(
             policy_field=policy_field,
         )
         metrics["capability_eval_count"] = len(capability_list)
+
+    if aulc_rows is not None:
+        aulc_list = list(aulc_rows)
+        metrics["aulc"] = area_under_learning_curve(
+            aulc_list,
+            x_field=aulc_x_field,
+            y_field=aulc_y_field,
+        )
+        metrics["aulc_point_count"] = len(aulc_list)
 
     if not metrics:
         raise ValueError("at least one evaluation input must be provided")

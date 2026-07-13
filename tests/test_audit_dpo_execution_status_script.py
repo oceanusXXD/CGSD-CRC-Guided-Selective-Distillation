@@ -81,6 +81,10 @@ class AuditDPOExecutionStatusScriptTest(unittest.TestCase):
 
 def _materialize_first_run_selection_outputs(tmp: Path, manifest: dict[str, object]) -> None:
     first = manifest["runs"][0]
+    for path in first["stages"][0]["inputs"].values():
+        target = tmp / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}", encoding="utf-8")
     for path in first["stages"][0]["outputs"].values():
         target = tmp / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +94,10 @@ def _materialize_first_run_selection_outputs(tmp: Path, manifest: dict[str, obje
 def _materialize_all_outputs(tmp: Path, manifest: dict[str, object]) -> None:
     for run in manifest["runs"]:
         for stage in run["stages"]:
+            for path in stage["inputs"].values():
+                target = tmp / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("{}", encoding="utf-8")
             for path in stage["outputs"].values():
                 target = tmp / path
                 target.parent.mkdir(parents=True, exist_ok=True)

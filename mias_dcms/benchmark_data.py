@@ -6,6 +6,15 @@ from typing import Any
 
 
 AG_NEWS_LABELS = ("World", "Sports", "Business", "Sci/Tech")
+TREC_LABELS = (
+    "ABBREVIATION",
+    "ENTITY",
+    "DESCRIPTION",
+    "HUMAN_BEING",
+    "LOCATION",
+    "NUMERIC_VALUE",
+)
+TREC_COARSE_LABEL_CODES = ("ABBR", "ENTY", "DESC", "HUM", "LOC", "NUM")
 DBPEDIA_14_LABELS = (
     "Company",
     "EducationalInstitution",
@@ -51,6 +60,28 @@ def normalize_dbpedia_row(row: dict[str, Any], *, split: str, index: int) -> dic
         "text": text,
         "label": label,
         "label_name": DBPEDIA_14_LABELS[label],
+    }
+
+
+def normalize_trec_row(row: dict[str, Any], *, split: str, index: int) -> dict[str, Any]:
+    raw_label = row.get("coarse_label", row.get("label"))
+    if isinstance(raw_label, str):
+        normalized_label = raw_label.strip().upper()
+        if normalized_label in TREC_COARSE_LABEL_CODES:
+            label = TREC_COARSE_LABEL_CODES.index(normalized_label)
+        elif normalized_label in TREC_LABELS:
+            label = TREC_LABELS.index(normalized_label)
+        else:
+            raise ValueError(f"unsupported TREC coarse label: {raw_label!r}")
+    else:
+        label = int(raw_label)
+    return {
+        "id": f"trec:{split}:{index}",
+        "dataset": "trec",
+        "split": split,
+        "text": str(row["text"]).strip(),
+        "label": label,
+        "label_name": TREC_LABELS[label],
     }
 
 
@@ -124,6 +155,8 @@ def normalize_helpsteer_preference_row(
         "response_2_char_count": len(response_2),
         "response_1_attributes": attribute_index.get((prompt, response_1)),
         "response_2_attributes": attribute_index.get((prompt, response_2)),
+        "source_a": row.get("source_a", row.get("response_1_source")),
+        "source_b": row.get("source_b", row.get("response_2_source")),
     }
 
 

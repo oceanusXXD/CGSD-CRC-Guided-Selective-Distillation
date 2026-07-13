@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from mias_dcms.dpo_run_pack import DPO_MAIN_METHODS
 from mias_dcms.experiment_run_matrix import (
     build_experiment_run_matrix,
+    config_payload_sha256,
     validate_experiment_run_matrix,
 )
 from mias_dcms.utils import read_json, write_json, write_jsonl
@@ -33,6 +34,7 @@ def main() -> None:
     args = parse_args()
     try:
         config = read_json(Path(args.config_path))
+        source_config_sha256 = config_payload_sha256(config)
         rows = build_experiment_run_matrix(
             datasets=_required_sequence(config, "datasets"),
             models=_required_sequence(config, "models"),
@@ -44,6 +46,7 @@ def main() -> None:
             judge_config=_required_mapping(config, "judge_config"),
             data_config=dict(config.get("data_config", {})),
             evaluation_config=dict(config.get("evaluation_config", {})),
+            source_config_sha256=source_config_sha256,
         )
         report = validate_experiment_run_matrix(
             rows,
@@ -52,11 +55,13 @@ def main() -> None:
             expected_budgets=[int(value) for value in _required_sequence(config, "budgets")],
             expected_seeds=[int(value) for value in _required_sequence(config, "seeds")],
             expected_methods=[str(value) for value in config.get("methods", DPO_MAIN_METHODS)],
+            expected_source_config_sha256=source_config_sha256,
         )
         payload = report.as_dict()
         payload["config_path"] = str(args.config_path)
         payload["output_matrix_path"] = str(args.output_matrix_path)
         payload["output_summary_path"] = str(args.output_summary_path)
+        payload["source_config_sha256"] = source_config_sha256
         if not report.is_ready:
             write_json(payload, Path(args.output_summary_path))
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))

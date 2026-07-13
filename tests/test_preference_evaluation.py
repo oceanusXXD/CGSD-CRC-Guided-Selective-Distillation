@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from mias_dcms.preference_evaluation import (
+    area_under_learning_curve,
     build_preference_evaluation_metrics,
     capability_regression,
     length_controlled_win_rate,
@@ -83,6 +84,25 @@ class PreferenceEvaluationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "capability rows must not be empty"):
             capability_regression([])
+
+    def test_area_under_learning_curve_is_normalized(self) -> None:
+        rows = [
+            {"budget": 0, "performance": 0.5},
+            {"budget": 10, "performance": 0.7},
+            {"budget": 20, "performance": 0.9},
+        ]
+
+        self.assertAlmostEqual(0.7, area_under_learning_curve(rows))
+
+    def test_area_under_learning_curve_keeps_best_duplicate_budget(self) -> None:
+        rows = [
+            {"budget": 0, "performance": 0.5},
+            {"budget": 10, "performance": 0.6},
+            {"budget": 10, "performance": 0.8},
+            {"budget": 20, "performance": 0.9},
+        ]
+
+        self.assertAlmostEqual(0.75, area_under_learning_curve(rows))
 
 
 if __name__ == "__main__":

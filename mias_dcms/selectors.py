@@ -13,12 +13,20 @@ FORBIDDEN_SELECTOR_INPUT_FIELDS = {
     "preference_label",
     "preference_strength",
     "preference_magnitude",
+    "preferred_response",
+    "preference_statement",
+    "preference_elaboration",
     "justification",
     "oracle_label",
     "true_class",
+    "true_label",
+    "true_label_name",
     "label",
+    "label_name",
     "groundtruth",
     "ground_truth",
+    "prediction_correct",
+    "is_correct",
     "test_metric",
 }
 
@@ -54,6 +62,30 @@ def random_without_replacement(
     return sorted(selected)
 
 
+def random_group_without_replacement(
+    sample_ids: Sequence[str],
+    group_ids: Sequence[str],
+    *,
+    budget: int,
+    seed: int,
+) -> list[str]:
+    """Sample at most one candidate from each observable selection group."""
+    ids = _validate_ids_and_budget(sample_ids, budget=0)
+    groups = [str(group_id) for group_id in group_ids]
+    if len(ids) != len(groups):
+        raise ValueError("sample_ids and group_ids must have equal length")
+    grouped: dict[str, list[str]] = {}
+    for sample_id, group_id in zip(ids, groups, strict=True):
+        if not group_id:
+            raise ValueError("group_ids must not contain empty values")
+        grouped.setdefault(group_id, []).append(sample_id)
+    if budget < 0 or budget > len(grouped):
+        raise ValueError("budget must be between 0 and unique selection-group count")
+    rng = random.Random(seed)
+    selected_groups = rng.sample(sorted(grouped), budget)
+    return sorted(rng.choice(sorted(grouped[group_id])) for group_id in selected_groups)
+
+
 def select_top_budget(
     *,
     sample_ids: Sequence[str],
@@ -67,6 +99,33 @@ def select_top_budget(
         zip(ids, (float(score) for score in scores)),
         key=lambda item: (-item[1], item[0]),
     )
+    return [sample_id for sample_id, _ in ranked[:budget]]
+
+
+def select_top_budget_by_group(
+    *,
+    sample_ids: Sequence[str],
+    scores: Sequence[float],
+    group_ids: Sequence[str],
+    budget: int,
+) -> list[str]:
+    """Select the highest-score representative of each group, then top budget groups."""
+    ids = _validate_ids_and_budget(sample_ids, budget=0)
+    normalized_scores = [float(score) for score in scores]
+    groups = [str(group_id) for group_id in group_ids]
+    if len(ids) != len(normalized_scores) or len(ids) != len(groups):
+        raise ValueError("sample_ids, scores, and group_ids must have equal length")
+    representatives: dict[str, tuple[str, float]] = {}
+    for sample_id, score, group_id in zip(ids, normalized_scores, groups, strict=True):
+        if not group_id:
+            raise ValueError("group_ids must not contain empty values")
+        candidate = (sample_id, score)
+        current = representatives.get(group_id)
+        if current is None or (-candidate[1], candidate[0]) < (-current[1], current[0]):
+            representatives[group_id] = candidate
+    if budget < 0 or budget > len(representatives):
+        raise ValueError("budget must be between 0 and unique selection-group count")
+    ranked = sorted(representatives.values(), key=lambda item: (-item[1], item[0]))
     return [sample_id for sample_id, _ in ranked[:budget]]
 
 

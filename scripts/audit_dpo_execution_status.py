@@ -30,7 +30,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     manifest = read_json(args.manifest_path)
-    existing_paths = _existing_manifest_paths(manifest, base_dir=args.manifest_path.parent)
+    existing_paths = _existing_manifest_paths(
+        manifest,
+        base_dirs=(PROJECT_ROOT, args.manifest_path.parent),
+    )
     report = audit_dpo_execution_status(manifest, existing_paths=existing_paths)
     payload = {
         **report.as_dict(),
@@ -76,7 +79,7 @@ def _compact_stdout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _existing_manifest_paths(manifest: dict[str, Any], *, base_dir: Path) -> set[str]:
+def _existing_manifest_paths(manifest: dict[str, Any], *, base_dirs: tuple[Path, ...]) -> set[str]:
     existing: set[str] = set()
     runs = manifest.get("runs", [])
     if not isinstance(runs, list):
@@ -93,7 +96,10 @@ def _existing_manifest_paths(manifest: dict[str, Any], *, base_dir: Path) -> set
                     continue
                 for path in paths.values():
                     path_text = str(path)
-                    if (base_dir / path_text).exists() or Path(path_text).exists():
+                    candidate = Path(path_text)
+                    if candidate.is_absolute() and candidate.exists():
+                        existing.add(path_text)
+                    elif any((base_dir / candidate).exists() for base_dir in base_dirs):
                         existing.add(path_text)
     return existing
 

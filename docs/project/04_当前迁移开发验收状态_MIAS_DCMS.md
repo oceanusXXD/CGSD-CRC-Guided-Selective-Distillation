@@ -1,6 +1,6 @@
 # MIAS/DCMS 当前迁移开发验收状态
 
-> 日期：2026-07-12  
+> 日期：2026-07-13
 > 范围：新主线文件树迁移、可复用代码迁移、旧树清理、D0-D7 基础开发能力。  
 > 说明：本文只记录当前代码与配置层面的完成状态；真实数据集、模型训练、DPO 训练和论文主结果仍需后续实验执行。
 
@@ -305,9 +305,17 @@
   - entropy uncertainty
   - margin uncertainty
   - selector input label-safety check
+- `mias_dcms.sampling_diagnostics`
+  - Random / Entropy / Margin / BADGE / GALAXY classification selectors
+  - `Entropy+DCMS` / `BADGE+DCMS` wrappers using soft class-posterior moments
+  - continuous propensity, rounded moments, selected slack and utility-retention artifacts
+  - accepts `cross_fitted_class_posterior`; raw scored probabilities are explicitly marked as a smoke-only proxy
 - `scripts/select_moment_matched_random.py`
   - 从 candidate JSONL 读取 group membership。
   - 输出 moment-matched Random 的 `selected_ids.json`、`membership.jsonl`、`selection_summary.json`。
+- `scripts/benchmark_pipeline.py diagnose-classification`
+  - 支持 `random,entropy,margin,badge,galaxy,entropy+dcms,badge+dcms`。
+  - DCMS 选择前只读取 selector-safe rows；真实 class label 只用于 post-selection shift report。
 
 ### 统计与 composition 审计
 
@@ -390,8 +398,9 @@
 最近一次验证：
 
 ```text
-full baseline before current DPO-planning slice: 189 passed, 202 subtests passed
-current focused verification after DPO training/evaluation stage wiring: 18 passed, 218 subtests passed in 18.23s
+full regression suite: 222 passed, 236 subtests passed in 109.94s
+focused selector/multiclass/data/gate verification: 17 passed in 7.12s
+compileall: passed; pip check: passed; git diff --check: passed
 stale refs: none in active mainline scan
 old dirs: absent src, absent code, absent result
 ```
@@ -405,7 +414,9 @@ old dirs: absent src, absent code, absent result
   - `preference.split_manifest`: `experiments/inputs/preference/helpsteer2_preference/split_manifest.json`
 - `experiments/reports/gate_readiness.current.json`
   - 当前只证明 Gate 0 ready。
-  - Gate 4 已具备 fixed-pool / oracle-store / split-manifest 证据，但仍缺真实 `preference.logprobs` 与 `dpo.initial_policy_checkpoint`。
+- `experiments/reports/gate_readiness.strict.current.json`
+  - `ready_gates: [gate_0_protocol_freeze]`；其余 10 个 Gate blocked，缺失证据数 37。
+  - Gate 4 已有真实 HelpSteer2 active pool / oracle store / split manifest；仍缺真实 policy/reference logprobs 和初始 DPO policy checkpoint。
 
 当前 DPO mainline planning artifacts：
 
@@ -419,20 +430,19 @@ old dirs: absent src, absent code, absent result
   - `expected_run_count: 30`
   - `planned_run_count: 30`
 - `experiments/reports/dpo_main/current/random_selection_stage_report.json`
-  - `Random` × seeds 1-5 selection stage 已执行，均输出 `selected_ids.json` 和 `selection_summary.json`。
+  - 当前主线未执行 selection stage；fixed pool 已存在，但所有方法仍缺主线 logprobs 输入。
 - `experiments/reports/dpo_main/current/random_reveal_stage_report.json`
-  - `Random` × seeds 1-5 reveal stage 已执行，均输出 `revealed_rows.jsonl` 和 `dpo_train_rows.jsonl`。
+  - 当前仅保留历史 stage report；其路径不构成当前主线完成证据。
   - stage runner 默认只保存 stdout/stderr preview 与 parsed JSON summary，不再把完整 child stdout 塞进报告。
-  - manifest 已具备 training stage 命令：`scripts/train_preference_dpo_run.py` 从 `dpo_train_rows.jsonl` 训练 DPO policy adapter，并输出 `training_summary.json` 与 `cost_report.json`。
-  - manifest 已具备 summary stage 命令：`scripts/build_dpo_run_record.py` 从 selection / reveal / training / evaluation / cost 产物生成单 run `run_record.json`。
-  - evaluation stage 通过 `evaluation_config` 模板生成 `heldout_preference_predictions.jsonl`、`judge_rows.jsonl` 和 `capability_rows.jsonl` 输入路径，并调用 `scripts/audit_preference_evaluation.py`；当前这些真实评估输入尚未生成，因此 status audit 会保持 blocked。
+  - manifest 已具备 training、evaluation、summary stage 命令；当前 `execution_status.json` 显示 30 个 planned runs 均在 selection 阶段因缺失输入而 blocked。
+  - evaluation stage 通过 `evaluation_config` 模板生成 `heldout_preference_predictions.jsonl`、`judge_rows.jsonl`、`capability_rows.jsonl` 和 `aulc_rows.jsonl` 输入路径；这些主线评估输入尚未生成。
 - `experiments/reports/dpo_main/current/execution_status.json`
   - `is_complete: false`
   - `run_count: 30`
-  - `in_progress_run_count: 5`
-  - `blocked_run_count: 25`
-  - `next_stage_counts: {selection: 25, training: 5}`
-  - 5 个 `Random` run 已推进到 training stage；其余 baseline/DCMS run 仍缺真实 `experiments/inputs/preference/helpsteer2_preference/logprobs.jsonl`，所以停在 selection stage。
+  - `in_progress_run_count: 0`
+  - `blocked_run_count: 30`
+  - `next_stage_counts: {selection: 30}`
+  - 30 个主线 run 均因缺失主线 logprobs 输入停在 selection stage；fixed pool 本身已存在。
   - 当前 manifest command counts：selection 65、reveal 30、training 30、evaluation 30、summary 30。
   - `scripts/audit_dpo_execution_status.py` 默认 stdout 为 compact summary；完整 run 明细仍写入 `execution_status.json`。
 
@@ -452,13 +462,14 @@ old dirs: absent src, absent code, absent result
 
 - 准备 AG News / TREC 固定池。
 - 训练初始模型并保存完整 logits。
-- 跑 Random / Entropy / BADGE / GALAXY 采集统计。
+- `scripts/benchmark_pipeline.py` 已实现 Random / Entropy / Margin / BADGE / GALAXY，以及 `Entropy+DCMS` / `BADGE+DCMS`；当前只有 24-row AG News 和 36-row TREC smoke，不能声称 Gate 2-3 完成。
+- 跑完整 AG News / TREC、多 seed、多模型的采集统计。
 - 跑 class-intercept alpha response curves。
 - 验证 propensity identity 和多 seed / 多模型稳定性。
 
 ### Gate 4-6：Preference / DPO 主任务
 
-- HelpSteer2-Preference fixed pool 已生成 current artifacts；TL;DR fixed pool 仍需准备。
+- 主线 HelpSteer2-Preference fixed pool 已生成：17,354 paired rows，seed / active / heldout / test 为 1,000 / 10,000 / 2,000 / 4,000；TL;DR fixed pool 仍需准备。
 - 当前 DPO run matrix / execution manifest 已生成 30 个 planned runs。
 - 训练初始 DPO policy。
 - 保存真实 policy / reference log-probs，并用 `scripts/audit_preference_logprobs.py` 做完整性和 implicit margin 审计。
@@ -490,3 +501,46 @@ old dirs: absent src, absent code, absent result
 - MIAS/DCMS 的基础算法、记录、审计、干预、固定池、preference logprob audit、selector score sanity audit、first-round acquisition audit、DPO intervention audit、DPO evaluation metric audit、preference baseline scoring / selection / DCMS input preparation / post-selection oracle reveal / run-level summary、DPO run-matrix preflight、preference experiment artifact preflight、DPO execution manifest、DPO execution status audit、current DPO planning artifacts、split、selector、soft group intervals/calibration/error audit、统计、composition、预算成本报告、run-level 聚合、DCMS frontier 和 CLI 工具已建立并通过测试。
 
 尚不能声明“完整 AAAI 实验方案完成”，因为真实数据、模型训练、DPO 主实验、统计检验和论文图表仍未执行。
+
+## 6. 2026-07-13 修复与 CPU smoke 验证
+
+本轮修复了 ActiveDPO logprob token-count 字段兼容、AULC evaluation 输入、DPO
+update-step / initial-adapter 配置传递、selector hidden-field guard、paired A/B
+swap id、prompt split leakage guard，以及大池 DCMS continuous relaxation + rounding
+路径。
+
+可复现的合成 CPU smoke 结果位于：
+`experiments/reports/smoke_mias_dcms.current.json`。
+
+该 smoke 使用 60 个合成 preference pairs，验证了 10 个样本的 selection/reveal、
+ActiveDPO+DCMS、非二值 propensity、rounded group moments、A/B paired audit、
+preference metrics 和 AULC；它不是 Gate 4-10 的真实数据证据。
+
+## 7. 2026-07-13 真实模型合成池 smoke
+
+`scripts/run_qwen_preference_smoke.py` 在本地 Qwen3-0.6B 上完成了一条小规模端到端链：
+
+- 48 行 selector-safe active pool，8 / 24 / 8 / 8 的 seed / active / held-out / test split；
+- 8 个 seed rows 训练共享初始 LoRA，并完成 checkpoint registration；
+- 真实 policy/reference log-prob、Random / Reward Margin / APL / ActiveDPO / 两个 DCMS selector；
+- 训练一次 `ActiveDPO+DCMS`，held-out preference accuracy `0.75`、worst-group `0.50`、
+  length-controlled win rate `0.6667`、AULC `0.75`。
+
+完整报告：`experiments/reports/real_smoke_qwen06b.json`。
+该实验使用合成 pool 和固定合成 oracle labels，capability regression 是 preferred-response
+log-prob proxy；`paper_evidence: false`，不能替代 HelpSteer2 / TL;DR 主实验或 Gate 4-10。
+
+## 8. 2026-07-13 AG News selector/DCMS smoke
+
+使用真实 AG News 数据和本地 Qwen3-0.6B 的 24-row scored pool，运行了三个预算
+（4 / 8 / 12）的 `Random`、`Entropy`、`BADGE`、`GALAXY`、`Entropy+DCMS` 和
+`BADGE+DCMS`。完整产物位于：
+`experiments/runs/benchmark_shift/ag_news_qwen06b_smoke_dcms/`。
+
+- 每行保存了模型概率和 frozen representation；zero-shot pool accuracy 为 `0.8333`。
+- 两个 DCMS 方法都输出 `selected_ids`、连续 `q_propensity`、rounded moments、slack trace
+  和 utility-retained；预算 4 的 propensity 总和为 `4.0`。
+- TREC 另完成 36-row smoke（6 类各 6 条），Qwen3-0.6B zero-shot accuracy 为 `0.5556`，
+  产物位于 `experiments/runs/benchmark_shift/trec_qwen06b_smoke_dcms/`；同样覆盖三个预算和六种方法。
+- 这些 smoke 的 DCMS membership 使用 scored probability proxy；没有 cross-fitted estimator、
+  多 seed、多模型或完整 AG News / TREC 训练，因此 `paper_evidence: false`，Gate 2-3 仍 blocked。

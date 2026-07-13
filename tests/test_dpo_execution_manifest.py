@@ -24,10 +24,13 @@ class DPOExecutionManifestTest(unittest.TestCase):
 
         selection_stage = first_run["stages"][0]
         self.assertEqual("selection", selection_stage["stage"])
-        self.assertIn("logprobs_path", selection_stage["inputs"])
+        self.assertNotIn("logprobs_path", selection_stage["inputs"])
         self.assertIn("selected_ids_path", selection_stage["outputs"])
         self.assertEqual("blocked", selection_stage["status"])
         self.assertEqual("awaiting_execution", selection_stage["blocker"])
+
+        score_selection_stage = manifest["runs"][1]["stages"][0]
+        self.assertIn("logprobs_path", score_selection_stage["inputs"])
 
         reveal_stage = first_run["stages"][1]
         self.assertEqual(["selection"], reveal_stage["depends_on"])
@@ -117,10 +120,63 @@ class DPOExecutionManifestTest(unittest.TestCase):
         manifest = build_dpo_execution_manifest(rows)
 
         commands = manifest["runs"][0]["stages"][0]["commands"]
+        self.assertIn(
+            "prompt_clusters_path",
+            manifest["runs"][0]["stages"][0]["inputs"],
+        )
         score_command = commands[0]
         self.assertIn("--metadata_path experiments/inputs/preference/prompt_clusters.jsonl", score_command)
         self.assertIn("--active_dpo_length_normalize", score_command)
         self.assertIn("--active_dpo_novelty_weight 0.25", score_command)
+
+    def test_manifest_builds_formal_heldout_evaluation_commands_when_inputs_are_configured(self) -> None:
+        training_config = {
+            "initialization": "shared_seed_policy_v1",
+            "model_name_or_path": "qwen-0.6b",
+            "optimizer": "adamw",
+            "learning_rate": 5e-6,
+            "batch_size": 8,
+            "update_steps": 120,
+            "train_token_budget": 240000,
+            "data_accumulation": "cumulative",
+            "prompt_format": "chatml_pairwise_v1",
+            "generation_parameters": {"temperature": 0.0, "max_new_tokens": 256},
+            "initial_policy_adapter_path": "experiments/inputs/preference/initial_policy_adapter",
+            "seed_label_count": 8,
+        }
+        rows = build_experiment_run_matrix(
+            datasets=["helpsteer2"],
+            models=["qwen-0.6b"],
+            budgets=[4],
+            seeds=[1],
+            methods=["Random"],
+            artifact_root="experiments/runs/dpo_main",
+            training_config=training_config,
+            judge_config={
+                "judge_version": "fixed-human-labels-primary",
+                "judge_prompt_hash": "prompt-sha256",
+                "evaluator": "held_out_preference_labels",
+            },
+            data_config={},
+            evaluation_config={
+                "heldout_pool_path": "experiments/inputs/preference/heldout_pool.jsonl",
+                "heldout_oracle_store_path": "experiments/inputs/preference/heldout_oracle.json",
+                "heldout_logprobs_path_template": "{run_dir}/heldout_logprobs.jsonl",
+                "preference_predictions_path_template": "{run_dir}/heldout_preference_predictions.jsonl",
+                "judge_rows_path_template": "{run_dir}/judge_rows.jsonl",
+                "aulc_rows_path_template": "{run_dir}/aulc_rows.jsonl",
+            },
+        )
+
+        manifest = build_dpo_execution_manifest(rows)
+        stage = manifest["runs"][0]["stages"][3]
+
+        self.assertEqual(3, len(stage["commands"]))
+        self.assertIn("scripts/generate_preference_logprobs.py", stage["commands"][0])
+        self.assertIn("scripts/materialize_preference_dpo_evaluation.py", stage["commands"][1])
+        self.assertIn("scripts/audit_preference_evaluation.py", stage["commands"][2])
+        self.assertIn("heldout_pool_path", stage["inputs"])
+        self.assertIn("heldout_logprobs_path", stage["outputs"])
 
 
 def _run_matrix() -> list[dict[str, object]]:

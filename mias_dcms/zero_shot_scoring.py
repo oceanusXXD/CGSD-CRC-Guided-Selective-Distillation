@@ -66,18 +66,31 @@ def sequence_log_likelihoods(
     input_ids: torch.Tensor,
     prompt_lengths: torch.Tensor,
     attention_mask: torch.Tensor,
+    token_chunk_size: int = 128,
 ) -> torch.Tensor:
     if logits.ndim != 3 or input_ids.ndim != 2:
         raise ValueError("expected logits [batch, sequence, vocab] and input_ids [batch, sequence]")
-    shifted_log_probs = logits[:, :-1, :].log_softmax(dim=-1)
+    if token_chunk_size <= 0:
+        raise ValueError("token_chunk_size must be positive")
+    if logits.shape[:2] != input_ids.shape:
+        raise ValueError("logits and input_ids must agree on batch and sequence dimensions")
     target_ids = input_ids[:, 1:]
-    token_log_probs = shifted_log_probs.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
     token_positions = torch.arange(1, input_ids.shape[1], device=input_ids.device).unsqueeze(0)
     candidate_mask = token_positions >= prompt_lengths.to(input_ids.device).unsqueeze(1)
     candidate_mask &= attention_mask[:, 1:].bool()
     if torch.any(candidate_mask.sum(dim=1) == 0):
         raise ValueError("each sequence must contain at least one candidate token")
-    return (token_log_probs * candidate_mask).sum(dim=1)
+    totals = torch.zeros(logits.shape[0], dtype=logits.dtype, device=logits.device)
+    shifted_logits = logits[:, :-1, :]
+    for start in range(0, shifted_logits.shape[1], int(token_chunk_size)):
+        end = min(start + int(token_chunk_size), shifted_logits.shape[1])
+        log_probs = shifted_logits[:, start:end, :].log_softmax(dim=-1)
+        selected_log_probs = log_probs.gather(
+            -1,
+            target_ids[:, start:end].unsqueeze(-1),
+        ).squeeze(-1)
+        totals = totals + (selected_log_probs * candidate_mask[:, start:end]).sum(dim=1)
+    return totals
 
 
 class CausalCandidateScorer:
@@ -145,6 +158,32 @@ class CausalCandidateScorer:
         messages: Sequence[Sequence[dict[str, str]]],
         candidates: Sequence[str],
     ) -> list[list[float]]:
+        probabilities, _ = self._score_messages_impl(
+            messages,
+            candidates,
+            collect_representations=False,
+        )
+        return probabilities
+
+    def score_messages_with_representations(
+        self,
+        messages: Sequence[Sequence[dict[str, str]]],
+        candidates: Sequence[str],
+    ) -> tuple[list[list[float]], list[list[float]]]:
+        """Score candidates and return one frozen prompt representation per message."""
+        return self._score_messages_impl(
+            messages,
+            candidates,
+            collect_representations=True,
+        )
+
+    def _score_messages_impl(
+        self,
+        messages: Sequence[Sequence[dict[str, str]]],
+        candidates: Sequence[str],
+        *,
+        collect_representations: bool,
+    ) -> tuple[list[list[float]], list[list[float]]]:
         if not candidates:
             raise ValueError("candidates cannot be empty")
         encoded: list[tuple[int, list[int], int]] = []
@@ -167,16 +206,27 @@ class CausalCandidateScorer:
                     )
                 )
         grouped_scores = [[0.0 for _ in candidates] for _ in messages]
+        grouped_representations: list[list[float] | None] = [None for _ in messages]
         candidate_count = len(candidates)
         for start in range(0, len(encoded), self.batch_size):
             batch = encoded[start : start + self.batch_size]
-            scores = self._score_encoded_batch(batch)
+            scores, representations = self._score_encoded_batch(
+                batch,
+                collect_representation=collect_representations,
+            )
             for offset, score in enumerate(scores):
                 flat_index = start + offset
                 message_index = flat_index // candidate_count
                 candidate_index = flat_index % candidate_count
                 grouped_scores[message_index][candidate_index] = float(score)
-        return [softmax_probabilities(scores) for scores in grouped_scores]
+                if collect_representations and candidate_index == 0:
+                    grouped_representations[message_index] = representations[offset]
+        if collect_representations and any(value is None for value in grouped_representations):
+            raise RuntimeError("representation collection returned an incomplete batch")
+        return (
+            [softmax_probabilities(scores) for scores in grouped_scores],
+            [list(value or []) for value in grouped_representations],
+        )
 
     def _render_messages(self, messages: Sequence[dict[str, str]]) -> str:
         try:
@@ -193,7 +243,12 @@ class CausalCandidateScorer:
                 add_generation_prompt=True,
             )
 
-    def _score_encoded_batch(self, batch: Sequence[tuple[int, list[int], int]]) -> list[float]:
+    def _score_encoded_batch(
+        self,
+        batch: Sequence[tuple[int, list[int], int]],
+        *,
+        collect_representation: bool = False,
+    ) -> tuple[list[float], list[list[float]]]:
         device = _model_input_device(self.model)
         maximum_length = max(len(input_ids) for _, input_ids, _ in batch)
         pad_token_id = int(self.tokenizer.pad_token_id)
@@ -209,14 +264,30 @@ class CausalCandidateScorer:
         attention_tensor = torch.tensor(attention_masks, dtype=torch.long, device=device)
         prompt_tensor = torch.tensor(prompt_lengths, dtype=torch.long, device=device)
         with torch.inference_mode():
-            output = self.model(input_ids=input_tensor, attention_mask=attention_tensor)
+            output = self.model(
+                input_ids=input_tensor,
+                attention_mask=attention_tensor,
+                output_hidden_states=collect_representation,
+                return_dict=True,
+            )
         scores = sequence_log_likelihoods(
             logits=output.logits,
             input_ids=input_tensor,
             prompt_lengths=prompt_tensor,
             attention_mask=attention_tensor,
         )
-        return scores.detach().float().cpu().tolist()
+        score_values = scores.detach().float().cpu().tolist()
+        if not collect_representation:
+            return score_values, [[] for _ in batch]
+        hidden_states = getattr(output, "hidden_states", None)
+        if not hidden_states:
+            raise RuntimeError("model did not return hidden states for representation collection")
+        final_hidden = hidden_states[-1].detach().float()
+        representations = [
+            final_hidden[index, prompt_length - 1].cpu().tolist()
+            for index, (_, _, prompt_length) in enumerate(batch)
+        ]
+        return score_values, representations
 
 
 def _model_input_device(model: Any) -> torch.device:

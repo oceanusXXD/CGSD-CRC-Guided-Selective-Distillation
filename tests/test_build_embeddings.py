@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from scripts.build_embeddings import embed_texts_vllm
+from scripts.build_embeddings import embed_texts_vllm, pair_texts_for_row
 
 
 class BuildEmbeddingsTest(unittest.TestCase):
@@ -37,6 +37,18 @@ class BuildEmbeddingsTest(unittest.TestCase):
         self.assertEqual([["first"], ["second"]], model.calls)
         self.assertEqual(np.float32, embeddings.dtype)
         np.testing.assert_allclose(embeddings, np.array([[0.6, 0.8], [1.0, 0.0]], dtype=np.float32))
+
+    def test_prompt_mode_embeds_only_the_prompt_text(self) -> None:
+        texts = pair_texts_for_row(
+            {"prompt": "What is gravity?", "response_a": "A force."},
+            query_field="prompt",
+            document_field="response_a",
+            mode="prompt",
+            target_chars=3000,
+            overlap_chars=300,
+        )
+
+        self.assertEqual(["What is gravity?"], texts)
 
 
 if __name__ == "__main__":

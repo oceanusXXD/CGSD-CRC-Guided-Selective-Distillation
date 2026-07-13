@@ -6,7 +6,17 @@ import math
 import random
 import re
 from statistics import mean, median, pstdev
-from typing import Any
+from typing import Any, Mapping
+
+from mias_dcms.selection.dcms import rank_normalize_utilities, solve_dcms_with_slack
+from mias_dcms.selectors import (
+    FORBIDDEN_SELECTOR_INPUT_FIELDS,
+    assert_selector_rows_are_label_safe,
+)
+
+
+DEFAULT_DCMS_SLACK_GRID = (0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5)
+DEFAULT_DCMS_KAPPA = 0.05
 
 
 def select_rows(
@@ -25,9 +35,332 @@ def select_rows(
         candidates.sort(key=lambda row: (-_entropy(_probabilities(row)), str(row["id"])))
     elif method == "margin":
         candidates.sort(key=lambda row: (_margin(_probabilities(row)), str(row["id"])))
+    elif method == "badge":
+        return _select_badge(candidates, budget=budget, seed=seed)
+    elif method == "galaxy":
+        return _select_galaxy(candidates, budget=budget, seed=seed)
     else:
         raise ValueError(f"unsupported selection method: {method}")
     return candidates[:budget]
+
+
+def select_classification_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    method: str,
+    budget: int,
+    seed: int,
+    dcms_target: str | Mapping[str, float] = "uniform",
+    dcms_slack_grid: Iterable[float] = DEFAULT_DCMS_SLACK_GRID,
+    dcms_kappa: float = DEFAULT_DCMS_KAPPA,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Select classification rows and optionally apply a soft-posterior DCMS wrapper.
+
+    The input must already be selector-safe.  For ``*_dcms`` methods, the
+    class memberships are the model probabilities, so true labels never enter
+    the solver.  The returned metadata is suitable for an auditable selection
+    artifact and contains the continuous inclusion propensities.
+    """
+    candidates = [dict(row) for row in rows]
+    assert_selector_rows_are_label_safe(candidates)
+    normalized_method = _normalize_classification_method(method)
+    if not normalized_method.endswith("_dcms"):
+        return (
+            select_rows(candidates, method=normalized_method, budget=budget, seed=seed),
+            None,
+        )
+
+    base_method = normalized_method.removesuffix("_dcms")
+    sample_ids = [str(row["id"]) for row in candidates]
+    posterior_values = [row.get("cross_fitted_class_posterior") for row in candidates]
+    has_cross_fitted_posterior = any(value is not None for value in posterior_values)
+    if has_cross_fitted_posterior and not all(value is not None for value in posterior_values):
+        raise ValueError("cross_fitted_class_posterior must be present for every classification row")
+    probabilities = [
+        _classification_group_probabilities(row)
+        for row in candidates
+    ]
+    memberships = [
+        {f"class={index}": probability for index, probability in enumerate(values)}
+        for values in probabilities
+    ]
+    utilities = [
+        _classification_dcms_utility(row, base_method)
+        for row in candidates
+    ]
+    target_moments = _classification_target_moments(
+        probabilities,
+        target=dcms_target,
+    )
+    result = solve_dcms_with_slack(
+        sample_ids=sample_ids,
+        utilities=rank_normalize_utilities(utilities),
+        group_membership=memberships,
+        budget=budget,
+        target_moments=target_moments,
+        slack_grid=tuple(float(value) for value in dcms_slack_grid),
+        kappa=dcms_kappa,
+        rounding_seed=seed,
+    )
+    rows_by_id = {str(row["id"]): row for row in candidates}
+    selected = [rows_by_id[sample_id] for sample_id in result.selected_ids]
+    metadata = {
+        "method": normalized_method,
+        "base_method": base_method,
+        "budget": int(budget),
+        "target": str(dcms_target) if isinstance(dcms_target, str) else "explicit",
+        "target_moments": dict(target_moments),
+        "group_membership": "soft_class_posterior",
+        "posterior_source": (
+            "cross_fitted_class_posterior" if has_cross_fitted_posterior else "probabilities_proxy"
+        ),
+        "utility_normalization": "rank",
+        "selected_ids": list(result.selected_ids),
+        "q_propensity": dict(result.q_propensity),
+        "selection_indicator": dict(result.selection_indicator),
+        "continuous_moments": dict(result.continuous_moments),
+        "rounded_moments": dict(result.rounded_moments),
+        "robust_lower_moments": dict(result.robust_lower_moments),
+        "robust_upper_moments": dict(result.robust_upper_moments),
+        "utility_retained": float(result.utility_retained),
+        "max_constraint_violation": float(result.max_constraint_violation),
+        "selected_slack": result.selected_slack,
+        "solver_status": result.solver_status,
+        "rounding_seed": result.rounding_seed,
+        "slack_trace": [
+            {
+                "slack": trace.slack,
+                "feasible": trace.feasible,
+                "utility_retained": trace.utility_retained,
+                "max_constraint_violation": trace.max_constraint_violation,
+                "expected_moments": dict(trace.expected_moments),
+                "meets_utility_threshold": trace.meets_utility_threshold,
+                "solver_status": trace.solver_status,
+            }
+            for trace in result.slack_trace
+        ],
+    }
+    return selected, metadata
+
+
+def _normalize_classification_method(method: str) -> str:
+    normalized = str(method).strip().lower().replace("+", "_").replace("-", "_")
+    aliases = {
+        "random": "random",
+        "entropy": "entropy",
+        "margin": "margin",
+        "badge": "badge",
+        "galaxy": "galaxy",
+        "entropy_dcms": "entropy_dcms",
+        "badge_dcms": "badge_dcms",
+    }
+    if normalized not in aliases:
+        raise ValueError(f"unsupported classification selection method: {method!r}")
+    return aliases[normalized]
+
+
+def _classification_dcms_utility(row: Mapping[str, Any], method: str) -> float:
+    probabilities = _probabilities(dict(row))
+    if method == "entropy":
+        return _entropy(probabilities)
+    if method == "badge":
+        return math.sqrt(sum(value * value for value in _badge_gradient_embedding(row)))
+    raise ValueError(f"unsupported DCMS base method: {method!r}")
+
+
+def _classification_group_probabilities(row: Mapping[str, Any]) -> list[float]:
+    value = row.get("cross_fitted_class_posterior")
+    if value is None:
+        return _probabilities(dict(row))
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("cross_fitted_class_posterior must be a list or tuple")
+    values = [float(item) for item in value]
+    if len(values) < 2:
+        raise ValueError("cross_fitted_class_posterior must contain at least two classes")
+    if any(not math.isfinite(item) or item < 0.0 for item in values):
+        raise ValueError("cross_fitted_class_posterior must be finite and non-negative")
+    total = sum(values)
+    if total <= 0.0:
+        raise ValueError("cross_fitted_class_posterior must have positive mass")
+    return [item / total for item in values]
+
+
+def _classification_target_moments(
+    probabilities: list[list[float]],
+    *,
+    target: str | Mapping[str, float],
+) -> dict[str, float]:
+    if not probabilities:
+        raise ValueError("probabilities must not be empty")
+    class_count = len(probabilities[0])
+    if any(len(values) != class_count for values in probabilities):
+        raise ValueError("all probability rows must have the same class count")
+    if isinstance(target, Mapping):
+        resolved = {str(key): float(value) for key, value in target.items()}
+        expected = {f"class={index}" for index in range(class_count)}
+        if set(resolved) != expected:
+            raise ValueError("explicit DCMS target must cover every class exactly once")
+        return resolved
+    normalized_target = str(target).strip().lower()
+    if normalized_target == "uniform":
+        value = 1.0 / class_count
+        return {f"class={index}": value for index in range(class_count)}
+    if normalized_target == "pool":
+        return {
+            f"class={index}": mean(values[index] for values in probabilities)
+            for index in range(class_count)
+        }
+    raise ValueError(f"unsupported DCMS target: {target!r}")
+
+
+def _select_badge(
+    candidates: list[dict[str, Any]],
+    *,
+    budget: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Select diverse uncertainty-weighted gradient embeddings.
+
+    Rows must expose ``representation_embedding`` (or ``embedding``).  The
+    embedding is combined with the predicted-class residual, matching the
+    BADGE gradient proxy while keeping selection label-safe.
+    """
+    vectors = [_badge_gradient_embedding(row) for row in candidates]
+    selected_indexes = _farthest_point_indexes(vectors, budget=budget, seed=seed)
+    return [candidates[index] for index in selected_indexes]
+
+
+def _select_galaxy(
+    candidates: list[dict[str, Any]],
+    *,
+    budget: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Select a graph-covering batch using frozen representation embeddings."""
+    vectors = [_representation_embedding(row) for row in candidates]
+    selected_indexes = _facility_location_indexes(vectors, candidates, budget=budget, seed=seed)
+    return [candidates[index] for index in selected_indexes]
+
+
+def _badge_gradient_embedding(row: Mapping[str, Any]) -> list[float]:
+    probabilities = _probabilities(dict(row))
+    representation = _representation_embedding(row)
+    predicted = max(range(len(probabilities)), key=probabilities.__getitem__)
+    residual = [
+        (1.0 if class_index == predicted else 0.0) - probability
+        for class_index, probability in enumerate(probabilities)
+    ]
+    return [
+        float(residual_value * embedding_value)
+        for residual_value in residual
+        for embedding_value in representation
+    ]
+
+
+def _representation_embedding(row: Mapping[str, Any]) -> list[float]:
+    value = row.get("representation_embedding", row.get("embedding"))
+    if not isinstance(value, (list, tuple)) or not value:
+        sample_id = row.get("id", row.get("sample_id", "<unknown>"))
+        raise ValueError(
+            f"{sample_id!r} is missing representation_embedding required by BADGE/GALAXY"
+        )
+    vector = [float(item) for item in value]
+    if any(not math.isfinite(item) for item in vector):
+        raise ValueError("representation embeddings must be finite")
+    norm = math.sqrt(sum(item * item for item in vector))
+    if norm <= 1e-12:
+        raise ValueError("representation embeddings must have non-zero norm")
+    return [item / norm for item in vector]
+
+
+def _farthest_point_indexes(
+    vectors: list[list[float]],
+    *,
+    budget: int,
+    seed: int,
+) -> list[int]:
+    if not vectors:
+        return []
+    norms = [sum(value * value for value in vector) for vector in vectors]
+    first_candidates = [index for index, norm in enumerate(norms) if norm == max(norms)]
+    first = random.Random(seed).choice(sorted(first_candidates))
+    selected = [first]
+    remaining = set(range(len(vectors))) - {first}
+    while len(selected) < budget and remaining:
+        best_index = max(
+            remaining,
+            key=lambda index: (
+                min(_squared_distance(vectors[index], vectors[chosen]) for chosen in selected),
+                str(index),
+            ),
+        )
+        selected.append(best_index)
+        remaining.remove(best_index)
+    return selected
+
+
+def _facility_location_indexes(
+    vectors: list[list[float]],
+    candidates: list[dict[str, Any]],
+    *,
+    budget: int,
+    seed: int,
+) -> list[int]:
+    if not vectors:
+        return []
+    similarities = [
+        [max(-1.0, min(1.0, _dot(left, right))) for right in vectors]
+        for left in vectors
+    ]
+    first = max(
+        range(len(vectors)),
+        key=lambda index: (_entropy(_probabilities(candidates[index])), str(candidates[index]["id"])),
+    )
+    selected = [first]
+    remaining = set(range(len(vectors))) - {first}
+    current_coverage = [similarities[index][first] for index in range(len(vectors))]
+    while len(selected) < budget and remaining:
+        best_index = max(
+            remaining,
+            key=lambda candidate_index: (
+                sum(
+                    max(0.0, similarities[index][candidate_index] - current_coverage[index])
+                    for index in range(len(vectors))
+                ),
+                str(candidates[candidate_index]["id"]),
+            ),
+        )
+        selected.append(best_index)
+        remaining.remove(best_index)
+        current_coverage = [
+            max(current_coverage[index], similarities[index][best_index])
+            for index in range(len(vectors))
+        ]
+    return selected
+
+
+def _dot(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right):
+        raise ValueError("representation embeddings must have equal dimensions")
+    return sum(a * b for a, b in zip(left, right, strict=True))
+
+
+def _squared_distance(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right):
+        raise ValueError("representation embeddings must have equal dimensions")
+    return sum((a - b) ** 2 for a, b in zip(left, right, strict=True))
+
+
+def selector_safe_view(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return rows with oracle/ground-truth fields removed before selection."""
+    return [
+        {
+            key: value
+            for key, value in dict(row).items()
+            if key not in FORBIDDEN_SELECTOR_INPUT_FIELDS
+        }
+        for row in rows
+    ]
 
 
 def classification_shift_report(

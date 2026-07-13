@@ -112,6 +112,7 @@ from mias_dcms.preference_experiment_preflight import (
     audit_preference_experiment_preflight,
 )
 from mias_dcms.preference_evaluation import (
+    area_under_learning_curve,
     build_preference_evaluation_metrics,
     capability_regression,
     length_controlled_win_rate,
@@ -126,6 +127,12 @@ from mias_dcms.preference_intervention_audit import (
 )
 from mias_dcms.preference_acquisition_audit import audit_preference_acquisition
 from mias_dcms.preference_selector_audit import audit_preference_selector_scores
+from mias_dcms.preference_selection_metrics import (
+    DEFAULT_PREFERENCE_AUDIT_GROUP_FIELDS,
+    build_preference_selection_metrics,
+    materialize_preference_group_fields,
+    utility_retained_from_scores,
+)
 from mias_dcms.records import (
     AcquisitionRecord,
     RunRecord,
@@ -265,10 +272,14 @@ __all__ = [
     "audit_preference_logprobs",
     "audit_preference_selector_scores",
     "audit_selector_replacement",
+    "DEFAULT_PREFERENCE_AUDIT_GROUP_FIELDS",
     "audit_experiment_gate_readiness",
     "bootstrap_mean_ci",
     "build_budget_report",
     "build_preference_evaluation_metrics",
+    "area_under_learning_curve",
+    "build_preference_selection_metrics",
+    "materialize_preference_group_fields",
     "build_fixed_multiclass_splits",
     "build_acquisition_record",
     "build_records_from_dcms",
@@ -318,6 +329,7 @@ __all__ = [
     "solve_dcms_with_slack",
     "summarize_metric_by_method",
     "utility_quantile_profile",
+    "utility_retained_from_scores",
     "validate_dpo_run_pack",
     "validate_dpo_execution_manifest",
     "validate_experiment_run_matrix",

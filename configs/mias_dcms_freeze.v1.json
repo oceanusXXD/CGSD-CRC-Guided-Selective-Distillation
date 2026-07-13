@@ -124,6 +124,8 @@
       "justification",
       "oracle_label",
       "true_class",
+      "true_label",
+      "true_label_name",
       "test_metric"
     ],
     "oracle_labels_separate_store": true,

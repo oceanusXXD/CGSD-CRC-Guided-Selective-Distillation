@@ -54,7 +54,20 @@ class DCMSTest(unittest.TestCase):
         self.assertEqual(["a"], result.selected_ids)
         self.assertEqual({"A": 0.0}, result.robust_lower_moments)
         self.assertEqual({"A": 1.0}, result.robust_upper_moments)
-        self.assertEqual(0.0, result.max_constraint_violation)
+        self.assertEqual(0.5, result.max_constraint_violation)
+
+    def test_robust_intervals_reject_target_inside_but_not_covering_interval(self) -> None:
+        with self.assertRaises(ValueError):
+            solve_dcms(
+                sample_ids=["x"],
+                utilities=[1.0],
+                group_membership=[{"A": 0.7}],
+                membership_lower=[{"A": 0.4}],
+                membership_upper=[{"A": 1.0}],
+                budget=1,
+                target_moments={"A": 0.5},
+                tolerance=0.0,
+            )
 
     def test_rounding_seed_makes_tie_breaking_reproducible(self) -> None:
         first = solve_dcms(
@@ -158,6 +171,52 @@ class DCMSTest(unittest.TestCase):
         self.assertTrue(frontier.points[1].meets_utility_threshold)
         self.assertAlmostEqual(1.0, frontier.points[1].utility_retained)
         self.assertAlmostEqual(0.5, frontier.points[1].coverage_deviation)
+
+    def test_large_pool_uses_continuous_relaxation_and_exact_batch_rounding(self) -> None:
+        sample_ids = [f"x{index}" for index in range(30)]
+        memberships = [
+            {"A": 1.0 if index < 15 else 0.0, "B": 0.0 if index < 15 else 1.0}
+            for index in range(30)
+        ]
+
+        result = solve_dcms_with_slack(
+            sample_ids=sample_ids,
+            utilities=[1.0 - index / 100.0 for index in range(30)],
+            group_membership=memberships,
+            budget=10,
+            target_moments={"A": 0.5, "B": 0.5},
+            slack_grid=[0.0, 0.1, 0.5],
+            kappa=0.5,
+            rounding_seed=7,
+        )
+
+        self.assertTrue(result.solver_status.startswith("scalable_"))
+        self.assertEqual(10, len(result.selected_ids))
+        self.assertEqual(0.5, result.rounded_moments["A"])
+        self.assertGreater(sum(0 < value < 1 for value in result.q_propensity.values()), 0)
+
+    def test_large_pool_rounding_respects_robust_endpoint_constraints(self) -> None:
+        sample_ids = [f"x{index}" for index in range(20)]
+        lower = [{"A": 0.8} for _ in range(10)] + [{"A": 0.0} for _ in range(10)]
+        upper = [{"A": 1.0} for _ in range(10)] + [{"A": 0.2} for _ in range(10)]
+
+        result = solve_dcms_with_slack(
+            sample_ids=sample_ids,
+            utilities=[1.0] * 10 + [0.5] * 10,
+            group_membership=[{"A": 0.5}] * 20,
+            membership_lower=lower,
+            membership_upper=upper,
+            budget=10,
+            target_moments={"A": 0.5},
+            slack_grid=[0.0, 0.1],
+            kappa=0.30,
+            rounding_seed=7,
+        )
+
+        self.assertEqual(0.1, result.selected_slack)
+        self.assertGreaterEqual(result.robust_lower_moments["A"], 0.4)
+        self.assertLessEqual(result.robust_upper_moments["A"], 0.6)
+        self.assertLessEqual(result.max_constraint_violation, 0.1)
 
 
 if __name__ == "__main__":

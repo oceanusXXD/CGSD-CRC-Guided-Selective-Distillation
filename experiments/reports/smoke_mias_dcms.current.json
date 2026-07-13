@@ -1,0 +1,65 @@
+{
+  "ab_position": {
+    "pair_count": 10,
+    "position_propensity": {
+      "original": 0.4,
+      "swapped": 0.0
+    },
+    "selected_count": 4
+  },
+  "acquisition_audit": {
+    "dcms_max_tv": 0.033333333333333326,
+    "dcms_random_reference_present": true,
+    "random_max_tv": 0.23333333333333334
+  },
+  "active_pool_rows": 60,
+  "dcms": {
+    "max_constraint_violation": 0.033333333333333326,
+    "non_binary_propensity_count": 44,
+    "rounded_moments": {
+      "ab_position=original": 0.6,
+      "ab_position=swapped": 0.4,
+      "length_gap_bin=a_longer": 0.3,
+      "length_gap_bin=b_longer": 0.1,
+      "length_gap_bin=balanced": 0.6
+    },
+    "selected_slack": 0.05,
+    "solver_status": "scalable_slsqp",
+    "utility_retained": 0.9860896449598096
+  },
+  "dpo_train_row_count": 10,
+  "evaluation": {
+    "aulc": 0.61,
+    "aulc_point_count": 3,
+    "capability_eval_count": 3,
+    "capability_regression": 0.019999999999999907,
+    "judge_eval_count": 5,
+    "length_controlled_win_rate": 0.6666666666666666,
+    "preference_accuracy": 0.6,
+    "preference_eval_count": 5,
+    "raw_judge_win_rate": 0.6,
+    "worst_group_preference_accuracy": 0.5
+  },
+  "input_rows": 60,
+  "intervention_input_rows": 60,
+  "revealed_count": 10,
+  "score_methods": [
+    "reward_margin",
+    "apl",
+    "active_dpo"
+  ],
+  "seed": 20260713,
+  "selected_counts": {
+    "active_dpo": 10,
+    "active_dpo_dcms": 10,
+    "random": 10
+  },
+  "smoke_type": "synthetic_cpu",
+  "split_sizes": {
+    "active_pool_ids": 40,
+    "heldout_ids": 5,
+    "seed_ids": 10,
+    "test_ids": 5,
+    "unused_ids": 0
+  }
+}

@@ -69,6 +69,8 @@ class CodebaseCleanlinessTest(unittest.TestCase):
             "register_initial_policy_checkpoint.py",
             "reveal_preference_labels.py",
             "run_dpo_manifest_stage.py",
+            "run_mias_dcms_smoke.py",
+            "run_qwen_preference_smoke.py",
             "select_crc_error_mass.py",
             "select_dcms.py",
             "select_moment_matched_random.py",

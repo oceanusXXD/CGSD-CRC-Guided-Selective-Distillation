@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--query_field', default='query')
     parser.add_argument('--document_field', default='document')
     parser.add_argument('--id_field', default='id')
-    parser.add_argument('--mode', choices=['document', 'chunk'], default='document')
+    parser.add_argument('--mode', choices=['document', 'chunk', 'prompt'], default='document')
     parser.add_argument('--target_chars', type=int, default=3000)
     parser.add_argument('--overlap_chars', type=int, default=300)
     parser.add_argument('--limit', type=int, default=None)
@@ -156,6 +156,8 @@ def read_jsonl(path: Path, *, limit: int | None=None) -> list[dict[str, Any]]:
 
 def pair_texts_for_row(row: dict[str, Any], *, query_field: str, document_field: str, mode: str, target_chars: int, overlap_chars: int) -> list[str]:
     query = str(row[query_field])
+    if str(mode) == 'prompt':
+        return [query]
     document = str(row[document_field])
     if str(mode) == 'document':
         return [format_pair_embedding_text(document, query)]
@@ -300,7 +302,7 @@ def build_embeddings(args: argparse.Namespace) -> dict[str, Any]:
         torch.cuda.empty_cache()
     if row_cursor != total_rows:
         raise RuntimeError(f'embedding row count mismatch: expected {total_rows} wrote {row_cursor}')
-    meta = {'data_path': str(data_path), 'embedding_model': str(args.model_path), 'embedding_backend': backend, 'mode': str(args.mode), 'embedding_text_format': 'Query:\\n{query}\\n\\nDocument:\\n{document}', 'pair_embedding_version': 'query_document', 'row_count': int(total_rows), 'dimension': int(dimension or 0), 'max_length': int(args.max_length), 'device': device_label, 'torch_dtype': dtype_label, 'query_field': str(args.query_field), 'document_field': str(args.document_field), 'id_field': str(args.id_field), 'target_chars': int(args.target_chars), 'overlap_chars': int(args.overlap_chars), 'request_batch_size': int(args.request_batch_size), 'flush_rows': int(args.flush_rows), 'tensor_parallel_size': int(args.tensor_parallel_size), 'gpu_memory_utilization': float(args.gpu_memory_utilization), 'enforce_eager': bool(args.enforce_eager), 'request_count': int(request_count), 'input_count': int(input_count), 'elapsed_seconds': float(time.time() - started_at)}
+    meta = {'data_path': str(data_path), 'embedding_model': str(args.model_path), 'embedding_backend': backend, 'mode': str(args.mode), 'embedding_text_format': '{prompt}' if str(args.mode) == 'prompt' else 'Query:\\n{query}\\n\\nDocument:\\n{document}', 'pair_embedding_version': 'prompt_only' if str(args.mode) == 'prompt' else 'query_document', 'row_count': int(total_rows), 'dimension': int(dimension or 0), 'max_length': int(args.max_length), 'device': device_label, 'torch_dtype': dtype_label, 'query_field': str(args.query_field), 'document_field': str(args.document_field), 'id_field': str(args.id_field), 'target_chars': int(args.target_chars), 'overlap_chars': int(args.overlap_chars), 'request_batch_size': int(args.request_batch_size), 'flush_rows': int(args.flush_rows), 'tensor_parallel_size': int(args.tensor_parallel_size), 'gpu_memory_utilization': float(args.gpu_memory_utilization), 'enforce_eager': bool(args.enforce_eager), 'request_count': int(request_count), 'input_count': int(input_count), 'elapsed_seconds': float(time.time() - started_at)}
     write_json(meta, meta_path)
     return meta
 

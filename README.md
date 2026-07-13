@@ -59,10 +59,22 @@ At the codebase level, the active tree currently provides:
 - intervention response statistics for monotonicity, slope confidence intervals, and visible failed settings;
 - paper artifact generation for frozen Fig. 1-3 / Table 1-3 JSON payloads and freeze-pack manifests;
 - baseline selectors, including Random, uncertainty-style selectors, and moment-matched Random;
+- classification selectors including BADGE and GALAXY, plus selector-safe Entropy+DCMS and BADGE+DCMS wrappers;
 - soft-group interval, calibration, and error-audit helpers;
 - budget, cost, statistical, composition, and paper-table aggregation utilities.
 
 The real AAAI experiment gates are not complete until the required datasets, model checkpoints, training runs, DPO runs, statistical tests, and paper figures are produced and audited.
+
+### What can run now
+
+| Line | Ready now | First missing input / action |
+| --- | --- | --- |
+| Binary re-audit | Split and selection materialization code | Recover per-setting raw/sample-level records before scoring. |
+| Multiclass MIAS | AG News/TREC data, fixed-split command, scoring and diagnostics | Create a fixed split, then score the selector-safe active pool. |
+| HelpSteer2 DPO | Fixed pool, initial adapter, selection logprobs, DPO stage commands | Build `selection_prompt_clusters.jsonl`, then rebuild the matrix and manifest. |
+
+The DPO status report is derived from the manifest. Whenever a config path
+changes, rebuild the matrix and manifest before trusting an old status JSON.
 
 ## Setup
 
@@ -83,6 +95,166 @@ Run the file-tree and legacy-import cleanliness checks:
 ```bash
 python -m pytest tests/test_codebase_cleanliness.py
 ```
+
+## Minimal Run Paths
+
+Run the commands below from the repository root. They are intentionally short
+paths for getting a real input or pilot run started; they are not a substitute
+for the full Gate 0-10 acceptance process.
+
+### 0. Smoke the local code path
+
+```bash
+python scripts/run_mias_dcms_smoke.py \
+  --output_path experiments/reports/smoke_mias_dcms.current.json
+```
+
+This is a deterministic CPU-only synthetic check. It verifies the pool,
+selection, DCMS, reveal, and metric plumbing, but is not paper evidence.
+
+### 1. Binary re-audit
+
+The archived CSV tables are not enough for a re-audit. Start from a recovered
+raw JSONL with stable ids and a label field, then create the selector-safe pool
+and separate oracle store:
+
+```bash
+python scripts/run_binary_reaudit.py prepare \
+  --input_path /path/to/recovered_binary_rows.jsonl \
+  --output_dir experiments/inputs/binary/imdb_q1 \
+  --dataset imdb_q1 \
+  --seed_label_count 100 \
+  --active_pool_size 1000 \
+  --test_size 1000 \
+  --seed 42 \
+  --id_field id \
+  --query_field query \
+  --document_field document \
+  --label_field groundtruth
+```
+
+After scoring the selector-safe pool with the frozen binary selector, use the
+matching oracle and seed rows to materialize the method-specific selections:
+
+```bash
+python scripts/run_binary_reaudit.py select \
+  --scored_path /path/to/binary_scored.jsonl \
+  --oracle_store_path experiments/inputs/binary/imdb_q1/selection_oracle_store.json \
+  --seed_train_rows_path experiments/inputs/binary/imdb_q1/seed_train_rows.jsonl \
+  --output_dir experiments/runs/binary_reaudit/imdb_q1 \
+  --dataset imdb_q1 \
+  --model qwen3-0.6b \
+  --methods Random,Entropy,Margin \
+  --budget 100 \
+  --seed 42 \
+  --config_hash binary_reaudit_v1 \
+  --evaluation_label_count 0
+```
+
+### 2. Multiclass MIAS pilot
+
+AG News and TREC inputs are already under `experiments/inputs/benchmarks/`.
+Create fixed ids first, score the same pool, then run the diagnostic selectors:
+
+```bash
+python scripts/prepare_multiclass_splits.py \
+  --input_path experiments/inputs/benchmarks/ag_news/train.jsonl \
+  --output_dir experiments/runs/multiclass/ag_news/splits \
+  --seed 42 \
+  --seed_size 400 \
+  --active_size 5000 \
+  --test_size 5000 \
+  --label_field label
+
+python scripts/benchmark_pipeline.py score-classification \
+  --data-path experiments/runs/multiclass/ag_news/splits/active_pool.jsonl \
+  --output-path experiments/runs/multiclass/ag_news/qwen06b_scored.jsonl \
+  --model /home/ubuntu/models/qwen3-0.6b \
+  --device-map auto \
+  --save-representations
+
+python scripts/benchmark_pipeline.py diagnose-classification \
+  --scored-path experiments/runs/multiclass/ag_news/qwen06b_scored.jsonl \
+  --oracle_store_path experiments/runs/multiclass/ag_news/splits/active_oracle_store.json \
+  --output-dir experiments/runs/multiclass/ag_news/diagnostics \
+  --budgets 100,500,1000 \
+  --methods random,entropy,badge,galaxy,entropy+dcms,badge+dcms \
+  --seed 42
+```
+
+The first pass is a natural-selection diagnostic. Do not call it a MIAS causal
+result until the predeclared class-intercept and representation interventions
+are also run.
+
+### 3. HelpSteer2 DPO pilot
+
+The current DPO config expects prompt-cluster metadata. Build prompt embeddings
+and clusters once before regenerating the run matrix:
+
+```bash
+python scripts/build_embeddings.py \
+  --data_path experiments/inputs/preference/helpsteer2_preference/selection_pool.jsonl \
+  --output_path experiments/inputs/preference/helpsteer2_preference/selection_prompt_embeddings.npy \
+  --ids_path experiments/inputs/preference/helpsteer2_preference/selection_prompt_embeddings.ids.jsonl \
+  --model_path /home/ubuntu/models/qwen3-0.6b \
+  --mode prompt \
+  --query_field prompt \
+  --id_field sample_id \
+  --device auto \
+  --torch_dtype float16
+
+python scripts/prepare_prompt_clusters.py \
+  --active_pool_path experiments/inputs/preference/helpsteer2_preference/selection_pool.jsonl \
+  --embeddings_path experiments/inputs/preference/helpsteer2_preference/selection_prompt_embeddings.npy \
+  --output_path experiments/inputs/preference/helpsteer2_preference/selection_prompt_clusters.jsonl \
+  --cluster_count 8
+```
+
+Then rebuild the matrix and manifest from the current config; do not reuse the
+older manifest after changing any input path:
+
+```bash
+python scripts/build_experiment_run_matrix.py \
+  --config_path configs/dpo_run_matrix.current.json \
+  --output_matrix_path experiments/runs/dpo_main/current/run_matrix.jsonl \
+  --output_summary_path experiments/reports/dpo_main/current/run_matrix_summary.json
+
+python scripts/build_dpo_execution_manifest.py \
+  --run_matrix_path experiments/runs/dpo_main/current/run_matrix.jsonl \
+  --output_path experiments/runs/dpo_main/current/execution_manifest.json \
+  --config_path configs/dpo_run_matrix.current.json
+
+python scripts/audit_preference_experiment_preflight.py \
+  --active_pool_path experiments/inputs/preference/helpsteer2_preference/selection_pool.jsonl \
+  --oracle_store_path experiments/inputs/preference/helpsteer2_preference/selection_oracle_store.json \
+  --logprobs_path experiments/inputs/preference/helpsteer2_preference/selection_logprobs.jsonl \
+  --split_manifest_path experiments/inputs/preference/helpsteer2_preference/split_manifest.json \
+  --run_matrix_path experiments/runs/dpo_main/current/run_matrix.jsonl \
+  --output_path experiments/reports/dpo_main/current/preflight.json \
+  --expected_methods 'Random,Reward Margin,APL,ActiveDPO,APL+DCMS,ActiveDPO+DCMS' \
+  --expected_seeds 1,2,3,4,5
+
+python scripts/audit_dpo_execution_status.py \
+  --manifest_path experiments/runs/dpo_main/current/execution_manifest.json \
+  --output_path experiments/reports/dpo_main/current/execution_status.json
+```
+
+Start with one cheap stage before launching all 30 planned runs:
+
+```bash
+python scripts/run_dpo_manifest_stage.py \
+  --manifest_path experiments/runs/dpo_main/current/execution_manifest.json \
+  --config_path configs/dpo_run_matrix.current.json \
+  --stage selection \
+  --method Random \
+  --seed 1 \
+  --limit 1 \
+  --report_path experiments/reports/dpo_main/current/random_selection_stage_report.json
+```
+
+Follow with `reveal`, `training`, and `evaluation` for that same run only after
+checking the report. The current matrix is a HelpSteer2/Qwen-0.6B pilot, not a
+complete paper matrix.
 
 ## Active Entrypoints
 
@@ -132,6 +304,8 @@ Primary MIAS/DCMS entrypoints include:
 - `scripts/validate_result_freeze_pack.py`
 - `scripts/build_paper_artifacts.py`
 - `scripts/benchmark_pipeline.py`
+- `scripts/run_mias_dcms_smoke.py` (deterministic synthetic CPU smoke; not paper evidence)
+- `scripts/run_qwen_preference_smoke.py` (real Qwen model on a synthetic preference pool; not paper evidence)
 
 Legacy binary-task utilities that remain usable have been moved to import from `mias_dcms/` and kept under `scripts/` only as public entrypoints. They must not recreate or depend on retired package trees.
 

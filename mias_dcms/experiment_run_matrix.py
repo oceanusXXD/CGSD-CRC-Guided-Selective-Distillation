@@ -37,6 +37,7 @@ REQUIRED_EXPERIMENT_ARTIFACTS = (
     ("selected_ids_path", "selected_ids.json"),
     ("revealed_rows_path", "revealed_rows.jsonl"),
     ("dpo_train_rows_path", "dpo_train_rows.jsonl"),
+    ("policy_adapter_path", "policy_adapter"),
     ("training_summary_path", "training_summary.json"),
     ("evaluation_metrics_path", "evaluation_metrics.json"),
     ("cost_report_path", "cost_report.json"),
@@ -84,6 +85,7 @@ def build_experiment_run_matrix(
     data_config: Mapping[str, Any] | None = None,
     evaluation_config: Mapping[str, Any] | None = None,
     methods: Sequence[str] = DPO_MAIN_METHODS,
+    source_config_sha256: str | None = None,
 ) -> list[dict[str, Any]]:
     _require_non_empty("datasets", datasets)
     _require_non_empty("models", models)
@@ -141,6 +143,8 @@ def build_experiment_run_matrix(
             "data_config_hash": data_hash,
             "evaluation_config_hash": evaluation_hash,
         }
+        if source_config_sha256 is not None:
+            row["source_config_sha256"] = str(source_config_sha256)
         row["config_hash"] = _stable_hash(
             {
                 "dataset": dataset,
@@ -166,6 +170,7 @@ def validate_experiment_run_matrix(
     expected_budgets: Sequence[int],
     expected_seeds: Sequence[int],
     expected_methods: Sequence[str] = DPO_MAIN_METHODS,
+    expected_source_config_sha256: str | None = None,
 ) -> ExperimentRunMatrixValidationReport:
     planned_rows = [dict(row) for row in rows]
     issues: list[dict[str, Any]] = []
@@ -196,6 +201,18 @@ def validate_experiment_run_matrix(
                 }
             )
         _validate_artifact_paths(row, row_index=row_index, run_id=run_id, issues=issues)
+        if expected_source_config_sha256 is not None:
+            observed_source_hash = str(row.get("source_config_sha256", ""))
+            if observed_source_hash != str(expected_source_config_sha256):
+                issues.append(
+                    {
+                        "code": "source_config_hash_mismatch",
+                        "row_index": row_index,
+                        "run_id": run_id,
+                        "expected_source_config_sha256": str(expected_source_config_sha256),
+                        "observed_source_config_sha256": observed_source_hash,
+                    }
+                )
 
     expected_run_ids = [
         build_experiment_run_id(
@@ -324,6 +341,11 @@ def _validate_shared_hash(
 def _stable_hash(payload: Mapping[str, Any]) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def config_payload_sha256(payload: Mapping[str, Any]) -> str:
+    """Return a canonical digest of the source config used to build a run matrix."""
+    return _stable_hash(payload)
 
 
 def _require_non_empty(name: str, values: Sequence[Any]) -> None:

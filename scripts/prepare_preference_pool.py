@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         default="random",
         help="Force all A/B pairs swapped, unswapped, or use seeded random swaps.",
     )
+    parser.add_argument(
+        "--paired_swap",
+        action="store_true",
+        help="Emit both original and swapped selector-safe rows for paired position audits.",
+    )
     return parser.parse_args()
 
 
@@ -45,6 +50,7 @@ def main() -> None:
         rows,
         seed=int(args.seed),
         force_swap=_force_swap_value(str(args.force_swap)),
+        include_both_positions=bool(args.paired_swap),
     )
     output_dir = Path(args.output_dir)
     write_jsonl(fixed_pool.active_pool, output_dir / "active_pool.jsonl")
@@ -54,6 +60,7 @@ def main() -> None:
         "input_path": str(args.input_path),
         "seed": int(args.seed),
         "force_swap": str(args.force_swap),
+        "paired_swap": bool(args.paired_swap),
         "active_pool_size": len(fixed_pool.active_pool),
         "oracle_store_size": len(fixed_pool.oracle_store),
         "swap_manifest_size": len(fixed_pool.swap_manifest),

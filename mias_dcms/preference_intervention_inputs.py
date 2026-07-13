@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping, Sequence
 import math
 from typing import Any
 
-from mias_dcms.preference_pool import normalized_response_length_gap
+from mias_dcms.preference_pool import length_gap_bin, normalized_response_length_gap
 from mias_dcms.selectors import assert_selector_rows_are_label_safe
 
 
@@ -57,16 +57,6 @@ def build_preference_intervention_rows(
             intervention_row["prompt_cluster"] = str(merged["prompt_cluster_id"])
         output_rows.append(intervention_row)
     return output_rows
-
-
-def length_gap_bin(value: float, *, edges: Sequence[float] = DEFAULT_LENGTH_BIN_EDGES) -> str:
-    lower, upper = _validate_length_bin_edges(edges)
-    gap = float(value)
-    if gap < lower:
-        return "b_longer"
-    if gap > upper:
-        return "a_longer"
-    return "balanced"
 
 
 def _rows_by_id(rows: Iterable[Mapping[str, Any]], *, id_field: str) -> dict[str, dict[str, Any]]:

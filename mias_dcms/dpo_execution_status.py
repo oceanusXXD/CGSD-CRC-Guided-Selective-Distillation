@@ -100,6 +100,7 @@ def _audit_run(
     stages: list[dict[str, Any]] = []
     next_stage: str | None = None
     any_complete = False
+    completed_stage_names: set[str] = set()
     for stage_index, source_stage in enumerate(source_stages):
         if not isinstance(source_stage, Mapping):
             stages.append(
@@ -116,9 +117,20 @@ def _audit_run(
             if next_stage is None:
                 next_stage = f"invalid_stage_{stage_index}"
             continue
-        stage = _audit_stage(source_stage, existing_paths=existing_paths)
+        stage_name = str(source_stage.get("stage", f"stage_{stage_index}"))
+        dependencies = [str(value) for value in source_stage.get("depends_on", [])]
+        missing_dependencies = [value for value in dependencies if value not in completed_stage_names]
+        dependency_blocker = (
+            f"awaiting_{missing_dependencies[0]}" if missing_dependencies else None
+        )
+        stage = _audit_stage(
+            source_stage,
+            existing_paths=existing_paths,
+            dependency_blocker=dependency_blocker,
+        )
         if stage["status"] == "complete":
             any_complete = True
+            completed_stage_names.add(stage_name)
         elif next_stage is None:
             next_stage = str(stage.get("stage"))
         stages.append(stage)
@@ -135,7 +147,12 @@ def _audit_run(
     return run
 
 
-def _audit_stage(source_stage: Mapping[str, Any], *, existing_paths: set[str]) -> dict[str, Any]:
+def _audit_stage(
+    source_stage: Mapping[str, Any],
+    *,
+    existing_paths: set[str],
+    dependency_blocker: str | None = None,
+) -> dict[str, Any]:
     stage = dict(source_stage)
     inputs = _string_mapping(stage.get("inputs"))
     outputs = _string_mapping(stage.get("outputs"))
@@ -147,12 +164,21 @@ def _audit_stage(source_stage: Mapping[str, Any], *, existing_paths: set[str]) -
     stage["missing_inputs"] = missing_inputs
     stage["present_outputs"] = present_outputs
     stage["missing_outputs"] = missing_outputs
-    if outputs and not missing_outputs:
+    if dependency_blocker is not None:
+        stage["status"] = "blocked"
+        stage["blocker"] = dependency_blocker
+    elif outputs and not missing_outputs and not missing_inputs:
         stage["status"] = "complete"
         stage["blocker"] = None
     else:
         stage["status"] = "blocked"
-        stage["blocker"] = str(source_stage.get("blocker") or "awaiting_execution")
+        source_blocker = str(source_stage.get("blocker") or "")
+        if missing_inputs and source_blocker == "awaiting_execution":
+            stage["blocker"] = "missing_inputs"
+        elif source_blocker:
+            stage["blocker"] = source_blocker
+        else:
+            stage["blocker"] = "missing_inputs" if missing_inputs else "awaiting_execution"
     return stage
 
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 from pathlib import Path
+import platform
 import sys
 from typing import Any
 
@@ -13,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from mias_dcms.benchmark_training import LoraTrainingConfig, train_preference_dpo
 from mias_dcms.preference_run_summary import estimate_preference_train_tokens
-from mias_dcms.utils import read_json, read_jsonl, write_json
+from mias_dcms.utils import read_json, read_jsonl, resolve_model_reference, write_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--method", required=True)
     parser.add_argument("--budget", type=int, required=True)
     parser.add_argument("--evaluation_label_count", type=int, default=0)
+    parser.add_argument("--seed_label_count", type=int, default=0)
     parser.add_argument("--judge_calls", type=int, default=0)
     parser.add_argument("--selector_compute_seconds", type=float, default=0.0)
     return parser.parse_args()
@@ -40,7 +44,7 @@ def main() -> None:
     training_config = _load_training_config(args)
     config = _lora_config_from_payload(
         training_config,
-        model_name_or_path=str(args.model_name_or_path),
+        model_name_or_path=resolve_model_reference(str(args.model_name_or_path), PROJECT_ROOT),
         output_dir=args.output_dir,
         seed=int(args.seed),
     )
@@ -59,16 +63,21 @@ def main() -> None:
         "dpo_train_rows_path": str(args.dpo_train_rows_path),
         "output_dir": str(args.output_dir),
         "training_config": training_config,
+        "input_sha256": _sha256_file(args.dpo_train_rows_path),
+        "runtime_environment": _runtime_environment(),
         "training_metrics": training_metrics,
         "backend_summary": backend_summary,
     }
     write_json(training_summary, args.training_summary_path)
     cost_report = {
-        "seed_label_count": 0,
+        "seed_label_count": int(args.seed_label_count),
         "evaluation_label_count": int(args.evaluation_label_count),
         "judge_calls": int(args.judge_calls),
         "selector_compute_seconds": float(args.selector_compute_seconds),
-        "train_tokens": estimate_preference_train_tokens(rows),
+        "train_tokens": int(
+            backend_summary.get("processed_input_tokens", estimate_preference_train_tokens(rows))
+        ),
+        "one_pass_train_token_estimate": estimate_preference_train_tokens(rows),
         "oracle_label_calls": int(args.budget),
     }
     write_json(cost_report, args.cost_report_path)
@@ -114,6 +123,16 @@ def _lora_config_from_payload(
         seed=seed,
         num_workers=int(payload.get("num_workers", 0)),
         beta=float(payload.get("beta", 0.1)),
+        update_steps=(
+            int(payload["update_steps"])
+            if payload.get("update_steps") is not None
+            else None
+        ),
+        initial_policy_adapter_path=(
+            str(payload["initial_policy_adapter_path"])
+            if payload.get("initial_policy_adapter_path")
+            else None
+        ),
     )
 
 
@@ -132,6 +151,30 @@ def _training_metrics(
         "training_token_budget": int(training_config.get("train_token_budget", estimate_preference_train_tokens(rows))),
         "mean_train_loss": backend_summary.get("mean_train_loss"),
         "mean_policy_preference_accuracy": backend_summary.get("mean_policy_preference_accuracy"),
+        "processed_pair_count": backend_summary.get("processed_pair_count"),
+        "processed_input_tokens": backend_summary.get("processed_input_tokens"),
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _runtime_environment() -> dict[str, object]:
+    import torch
+
+    return {
+        "python_version": platform.python_version(),
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "pythonhashseed": os.environ.get("PYTHONHASHSEED"),
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
     }
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,33 @@ def resolve_output_path(path: str | Path, project_root: Path) -> Path:
     if candidate.parts and candidate.parts[0] == project_root.name:
         return project_root.parent / candidate
     return project_root / candidate
+
+
+def resolve_model_reference(value: str | Path, project_root: Path) -> str:
+    """Resolve portable model aliases without making machine paths part of configs."""
+    raw = str(value)
+    candidate = Path(raw)
+    candidates: list[Path] = []
+    if candidate.is_absolute():
+        candidates.append(candidate)
+    else:
+        candidates.extend(
+            [
+                candidate,
+                project_root / candidate,
+                project_root.parent / candidate,
+                project_root / "model" / candidate,
+                project_root / "models" / candidate,
+                project_root.parent / "models" / candidate,
+            ]
+        )
+        model_root = os.environ.get("MIAS_DCMS_MODEL_ROOT")
+        if model_root:
+            candidates.append(Path(model_root) / candidate)
+    for path in candidates:
+        if path.exists():
+            return str(path)
+    return raw
 
 def count_parameters(module: torch.nn.Module) -> dict[str, int]:
     total = sum((param.numel() for param in module.parameters()))

@@ -6,6 +6,9 @@ import random
 from typing import Mapping, Sequence
 
 
+EXACT_ENUMERATION_MAX_SAMPLES = 18
+
+
 @dataclass(frozen=True)
 class DCMSSlackTrace:
     slack: float
@@ -115,6 +118,20 @@ def solve_dcms(
     targets = {group: float(target_moments.get(group, 0.0)) for group in groups}
     lower_membership = list(membership_lower) if membership_lower is not None else group_membership
     upper_membership = list(membership_upper) if membership_upper is not None else group_membership
+
+    if len(ids) > EXACT_ENUMERATION_MAX_SAMPLES:
+        return _solve_dcms_scalable(
+            ids=ids,
+            utility_values=utility_values,
+            group_membership=group_membership,
+            lower_membership=lower_membership,
+            upper_membership=upper_membership,
+            groups=groups,
+            targets=targets,
+            budget=budget,
+            tolerance=tolerance,
+            rounding_seed=rounding_seed,
+        )
 
     top_utility = _top_utility(utility_values, budget)
     best: tuple[
@@ -347,6 +364,245 @@ def _top_utility(utilities: Sequence[float], budget: int) -> float:
     return sum(sorted(utilities, reverse=True)[:budget])
 
 
+def _solve_dcms_scalable(
+    *,
+    ids: Sequence[str],
+    utility_values: Sequence[float],
+    group_membership: Sequence[Mapping[str, float]],
+    lower_membership: Sequence[Mapping[str, float]],
+    upper_membership: Sequence[Mapping[str, float]],
+    groups: set[str],
+    targets: Mapping[str, float],
+    budget: int,
+    tolerance: float,
+    rounding_seed: int | None,
+) -> DCMSResult:
+    """Solve the large-pool relaxation with LP + entropy refinement.
+
+    Small pools retain the exact reference solver above for transparent unit
+    tests. Real pools use a continuous robust relaxation and systematic
+    rounding, avoiding combinatorial enumeration.
+    """
+    if budget == 0:
+        zero = {group: 0.0 for group in sorted(groups)}
+        return DCMSResult(
+            selected_ids=[],
+            q_propensity={sample_id: 0.0 for sample_id in ids},
+            selection_indicator={sample_id: 0 for sample_id in ids},
+            continuous_moments=zero,
+            rounded_moments=zero,
+            robust_lower_moments=zero,
+            robust_upper_moments=zero,
+            utility_retained=1.0,
+            max_constraint_violation=0.0,
+            solver_status="scalable_zero_budget",
+            rounding_seed=rounding_seed,
+        )
+
+    try:
+        import numpy as np
+        from scipy.optimize import linprog, minimize
+    except ImportError as exc:
+        raise ImportError(
+            "large-pool DCMS requires numpy and scipy; install requirements.txt"
+        ) from exc
+
+    sample_count = len(ids)
+    utilities = np.asarray(utility_values, dtype=float)
+    lower = np.asarray(
+        [[float(row.get(group, 0.0)) for group in sorted(groups)] for row in lower_membership],
+        dtype=float,
+    ).T
+    upper = np.asarray(
+        [[float(row.get(group, 0.0)) for group in sorted(groups)] for row in upper_membership],
+        dtype=float,
+    ).T
+    sorted_groups = sorted(groups)
+    target_values = np.asarray([float(targets[group]) for group in sorted_groups], dtype=float)
+    if budget <= 0:
+        raise ValueError("budget must be positive in scalable DCMS")
+
+    a_ub = []
+    b_ub = []
+    for index in range(len(sorted_groups)):
+        a_ub.append(upper[index] / budget)
+        b_ub.append(target_values[index] + tolerance)
+        a_ub.append(-lower[index] / budget)
+        b_ub.append(-(target_values[index] - tolerance))
+    equality = np.ones((1, sample_count), dtype=float)
+    lp = linprog(
+        -utilities,
+        A_ub=np.asarray(a_ub, dtype=float),
+        b_ub=np.asarray(b_ub, dtype=float),
+        A_eq=equality,
+        b_eq=np.asarray([float(budget)]),
+        bounds=[(0.0, 1.0)] * sample_count,
+        method="highs",
+    )
+    if not lp.success:
+        raise ValueError(f"DCMS continuous relaxation is infeasible: {lp.message}")
+
+    q = np.asarray(lp.x, dtype=float)
+    entropy_weight = 1e-3
+
+    def objective(values: np.ndarray) -> float:
+        clipped = np.clip(values, 1e-9, 1.0 - 1e-9)
+        entropy = -clipped * np.log(clipped) - (1.0 - clipped) * np.log(1.0 - clipped)
+        return float(-(utilities @ clipped + entropy_weight * entropy.sum()))
+
+    def gradient(values: np.ndarray) -> np.ndarray:
+        clipped = np.clip(values, 1e-9, 1.0 - 1e-9)
+        entropy_gradient = np.log((1.0 - clipped) / clipped)
+        return -utilities - entropy_weight * entropy_gradient
+
+    refined = minimize(
+        objective,
+        q,
+        jac=gradient,
+        method="SLSQP",
+        bounds=[(0.0, 1.0)] * sample_count,
+        constraints=[
+            {"type": "eq", "fun": lambda values: float(np.sum(values) - budget), "jac": lambda _values: equality[0]},
+            {
+                "type": "ineq",
+                "fun": lambda values: np.asarray(b_ub) - np.asarray(a_ub) @ values,
+                "jac": lambda _values: -np.asarray(a_ub),
+            },
+        ],
+        options={"maxiter": 200, "ftol": 1e-9},
+    )
+    if refined.success and np.all(np.isfinite(refined.x)):
+        q = np.clip(np.asarray(refined.x, dtype=float), 0.0, 1.0)
+
+    selected_indexes = _systematic_round(q, budget=budget, seed=rounding_seed)
+    selected_indexes = _repair_rounding(
+        selected_indexes,
+        q=q,
+        utilities=utilities,
+        lower=lower,
+        upper=upper,
+        targets=target_values,
+        budget=budget,
+        tolerance=tolerance,
+    )
+    selected_set = set(selected_indexes)
+    continuous_moments = {
+        group: float(np.dot(q, np.asarray([row.get(group, 0.0) for row in group_membership])) / budget)
+        for group in sorted_groups
+    }
+    rounded_moments = {
+        group: float(np.mean([group_membership[index].get(group, 0.0) for index in selected_indexes]))
+        for group in sorted_groups
+    }
+    lower_moments = {
+        group: float(np.mean([lower_membership[index].get(group, 0.0) for index in selected_indexes]))
+        for group in sorted_groups
+    }
+    upper_moments = {
+        group: float(np.mean([upper_membership[index].get(group, 0.0) for index in selected_indexes]))
+        for group in sorted_groups
+    }
+    selected_utility = sum(float(utility_values[index]) for index in selected_indexes)
+    top_utility = _top_utility(utility_values, budget)
+    selected_ids = [
+        str(ids[index])
+        for index in sorted(selected_indexes, key=lambda index: (-utility_values[index], ids[index]))
+    ]
+    return DCMSResult(
+        selected_ids=selected_ids,
+        q_propensity={str(sample_id): float(value) for sample_id, value in zip(ids, q, strict=True)},
+        selection_indicator={str(sample_id): int(index in selected_set) for index, sample_id in enumerate(ids)},
+        continuous_moments=continuous_moments,
+        rounded_moments=rounded_moments,
+        robust_lower_moments=lower_moments,
+        robust_upper_moments=upper_moments,
+        utility_retained=selected_utility / top_utility if top_utility > 0.0 else 1.0,
+        max_constraint_violation=_max_robust_violation(lower_moments, upper_moments, targets),
+        solver_status="scalable_slsqp" if refined.success else "scalable_lp",
+        rounding_seed=rounding_seed,
+    )
+
+
+def _systematic_round(values: Any, *, budget: int, seed: int | None) -> list[int]:
+    import numpy as np
+
+    probabilities = np.asarray(values, dtype=float)
+    total = float(probabilities.sum())
+    if total <= 0.0:
+        raise ValueError("continuous DCMS solution has zero inclusion mass")
+    probabilities = probabilities * (float(budget) / total)
+    probabilities = np.clip(probabilities, 0.0, 1.0)
+    cumulative = np.cumsum(probabilities)
+    rng = random.Random(seed)
+    offset = rng.random() if seed is not None else 0.5
+    thresholds = offset + np.arange(int(budget), dtype=float)
+    selected = [int(np.searchsorted(cumulative, threshold, side="right")) for threshold in thresholds]
+    selected = sorted({index for index in selected if 0 <= index < len(probabilities)})
+    if len(selected) < budget:
+        ranked = sorted(range(len(probabilities)), key=lambda index: (-probabilities[index], index))
+        selected.extend(index for index in ranked if index not in set(selected))
+        selected = selected[:budget]
+    return selected
+
+
+def _repair_rounding(
+    selected_indexes: Sequence[int],
+    *,
+    q: Any,
+    utilities: Any,
+    lower: Any,
+    upper: Any,
+    targets: Any,
+    budget: int,
+    tolerance: float,
+) -> list[int]:
+    import numpy as np
+
+    selected = set(int(index) for index in selected_indexes)
+    if len(selected) != budget:
+        ranked = sorted(range(len(q)), key=lambda index: (-float(q[index]), -float(utilities[index]), index))
+        selected = set(ranked[:budget])
+
+    def violation(indexes: set[int]) -> float:
+        chosen = sorted(indexes)
+        lower_moments = np.mean(lower[:, chosen], axis=1)
+        upper_moments = np.mean(upper[:, chosen], axis=1)
+        return float(
+            np.max(
+                np.maximum(
+                    0.0,
+                    np.maximum(upper_moments - targets, targets - lower_moments),
+                )
+            )
+        )
+
+    current_violation = violation(selected)
+    if current_violation <= tolerance + 1e-9:
+        return sorted(selected)
+    for _ in range(max(1, len(q) * min(budget, 64))):
+        best = None
+        for outgoing in sorted(selected):
+            for incoming in range(len(q)):
+                if incoming in selected:
+                    continue
+                candidate = set(selected)
+                candidate.remove(outgoing)
+                candidate.add(incoming)
+                candidate_violation = violation(candidate)
+                candidate_key = (candidate_violation, -float(utilities[list(candidate)].sum()), -float(q[incoming]), incoming)
+                if best is None or candidate_key < best[0]:
+                    best = (candidate_key, candidate)
+        if best is None or best[0][0] >= current_violation - 1e-12:
+            break
+        current_violation, selected = best[0][0], best[1]
+        if current_violation <= tolerance + 1e-9:
+            return sorted(selected)
+    raise ValueError(
+        f"dependent rounding could not satisfy DCMS tolerance={tolerance}; "
+        f"rounded_violation={current_violation}"
+    )
+
+
 def _moments(
     selected_indexes: Sequence[int],
     group_membership: Sequence[Mapping[str, float]],
@@ -387,10 +643,17 @@ def _max_robust_violation(
     upper_moments: Mapping[str, float],
     targets: Mapping[str, float],
 ) -> float:
+    """Return the worst endpoint deviation from a robust target interval.
+
+    For every feasible true membership ``a`` satisfying ``lower <= a <= upper``,
+    the selected batch must satisfy ``target - tolerance <= a_bar <= target +
+    tolerance``.  Consequently the upper endpoint must not exceed the target
+    and the lower endpoint must not fall below it (before applying tolerance).
+    """
     violations = []
     for group, target in targets.items():
         lower = float(lower_moments[group])
         upper = float(upper_moments[group])
         target_value = float(target)
-        violations.append(max(0.0, lower - target_value, target_value - upper))
+        violations.append(max(0.0, upper - target_value, target_value - lower))
     return max(violations, default=0.0)

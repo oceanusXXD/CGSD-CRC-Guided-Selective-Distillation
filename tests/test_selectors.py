@@ -7,7 +7,9 @@ from mias_dcms.selectors import (
     entropy_uncertainty_scores,
     margin_uncertainty_scores,
     moment_matched_random,
+    random_group_without_replacement,
     random_without_replacement,
+    select_top_budget_by_group,
     select_top_budget,
 )
 
@@ -30,6 +32,21 @@ class SelectorToolsTest(unittest.TestCase):
 
         self.assertEqual(["a", "b"], selected)
 
+    def test_group_aware_selection_never_returns_both_ab_variants(self) -> None:
+        sample_ids = ["pair1:original", "pair1:swapped", "pair2:original", "pair2:swapped"]
+        group_ids = ["pair1", "pair1", "pair2", "pair2"]
+
+        random_ids = random_group_without_replacement(sample_ids, group_ids, budget=2, seed=7)
+        top_ids = select_top_budget_by_group(
+            sample_ids=sample_ids,
+            scores=[0.9, 0.95, 0.8, 0.7],
+            group_ids=group_ids,
+            budget=2,
+        )
+
+        self.assertEqual(2, len({sample_id.split(":")[0] for sample_id in random_ids}))
+        self.assertEqual(["pair1:swapped", "pair2:original"], top_ids)
+
     def test_entropy_uncertainty_scores_are_highest_for_uniform_probabilities(self) -> None:
         scores = entropy_uncertainty_scores([[0.5, 0.5], [0.99, 0.01]])
 
@@ -46,6 +63,11 @@ class SelectorToolsTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             assert_selector_rows_are_label_safe([{"sample_id": "leaky", "oracle_label": 1}])
+
+        with self.assertRaises(ValueError):
+            assert_selector_rows_are_label_safe(
+                [{"sample_id": "leaky", "label_name": "World", "prediction_correct": True}]
+            )
 
     def test_moment_matched_random_matches_target_moments_without_scores(self) -> None:
         result = moment_matched_random(

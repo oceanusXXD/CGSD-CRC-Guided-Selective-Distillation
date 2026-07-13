@@ -1,0 +1,231 @@
+{
+  "blocked_gate_count": 10,
+  "blocked_gates": [
+    "gate_1_binary_reaudit",
+    "gate_2_multiclass_environment",
+    "gate_3_multiclass_mias",
+    "gate_4_preference_fixed_pool",
+    "gate_5_preference_baselines",
+    "gate_6_dpo_mias",
+    "gate_7_dcms_correctness",
+    "gate_8_main_results",
+    "gate_9_statistics_fairness",
+    "gate_10_paper_claim_freeze"
+  ],
+  "evidence_path": "configs/experiment_gate_evidence.current.json",
+  "gate_count": 11,
+  "gates": {
+    "gate_0_protocol_freeze": {
+      "gate_id": "gate_0_protocol_freeze",
+      "is_ready": true,
+      "missing_evidence": [],
+      "present_evidence": [
+        "protocol.freeze"
+      ],
+      "required_evidence": [
+        "protocol.freeze"
+      ],
+      "status": "ready",
+      "title": "Gate 0: task and protocol freeze"
+    },
+    "gate_10_paper_claim_freeze": {
+      "gate_id": "gate_10_paper_claim_freeze",
+      "is_ready": false,
+      "missing_evidence": [
+        "paper.freeze_pack",
+        "paper.claim_audit",
+        "paper.artifact_manifest"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "paper.freeze_pack",
+        "paper.claim_audit",
+        "paper.artifact_manifest"
+      ],
+      "status": "blocked",
+      "title": "Gate 10: paper figures, tables, and claims"
+    },
+    "gate_1_binary_reaudit": {
+      "gate_id": "gate_1_binary_reaudit",
+      "is_ready": false,
+      "missing_evidence": [
+        "binary.sample_level_records",
+        "binary.budget_report",
+        "binary.mechanism_statistics",
+        "binary.downstream_metrics"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "binary.sample_level_records",
+        "binary.budget_report",
+        "binary.mechanism_statistics",
+        "binary.downstream_metrics"
+      ],
+      "status": "blocked",
+      "title": "Gate 1: legacy binary reaudit"
+    },
+    "gate_2_multiclass_environment": {
+      "gate_id": "gate_2_multiclass_environment",
+      "is_ready": false,
+      "missing_evidence": [
+        "multiclass.ag_news_split",
+        "multiclass.trec_split",
+        "multiclass.initial_logits",
+        "multiclass.baseline_selection_audits"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "multiclass.ag_news_split",
+        "multiclass.trec_split",
+        "multiclass.initial_logits",
+        "multiclass.baseline_selection_audits"
+      ],
+      "status": "blocked",
+      "title": "Gate 2: multiclass fixed environment"
+    },
+    "gate_3_multiclass_mias": {
+      "gate_id": "gate_3_multiclass_mias",
+      "is_ready": false,
+      "missing_evidence": [
+        "multiclass.intervention_curves",
+        "multiclass.intervention_statistics",
+        "multiclass.propensity_identity_audit",
+        "multiclass.representation_interventions"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "multiclass.intervention_curves",
+        "multiclass.intervention_statistics",
+        "multiclass.propensity_identity_audit",
+        "multiclass.representation_interventions"
+      ],
+      "status": "blocked",
+      "title": "Gate 3: multiclass MIAS causal identification"
+    },
+    "gate_4_preference_fixed_pool": {
+      "gate_id": "gate_4_preference_fixed_pool",
+      "is_ready": false,
+      "missing_evidence": [
+        "preference.logprobs",
+        "dpo.initial_policy_checkpoint"
+      ],
+      "present_evidence": [
+        "preference.active_pool",
+        "preference.oracle_store",
+        "preference.split_manifest"
+      ],
+      "required_evidence": [
+        "preference.active_pool",
+        "preference.oracle_store",
+        "preference.logprobs",
+        "preference.split_manifest",
+        "dpo.initial_policy_checkpoint"
+      ],
+      "status": "blocked",
+      "title": "Gate 4: preference fixed pool and label isolation"
+    },
+    "gate_5_preference_baselines": {
+      "gate_id": "gate_5_preference_baselines",
+      "is_ready": false,
+      "missing_evidence": [
+        "preference.baseline_scores",
+        "preference.selector_sanity_audits",
+        "preference.acquisition_audits",
+        "preference.random_reference"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "preference.baseline_scores",
+        "preference.selector_sanity_audits",
+        "preference.acquisition_audits",
+        "preference.random_reference"
+      ],
+      "status": "blocked",
+      "title": "Gate 5: active preference baselines"
+    },
+    "gate_6_dpo_mias": {
+      "gate_id": "gate_6_dpo_mias",
+      "is_ready": false,
+      "missing_evidence": [
+        "dpo.length_gamma_interventions",
+        "dpo.selector_replacement_interventions",
+        "dpo.ab_position_interventions",
+        "dpo.intervention_statistics"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "dpo.length_gamma_interventions",
+        "dpo.selector_replacement_interventions",
+        "dpo.ab_position_interventions",
+        "dpo.intervention_statistics"
+      ],
+      "status": "blocked",
+      "title": "Gate 6: DPO-side MIAS causal identification"
+    },
+    "gate_7_dcms_correctness": {
+      "gate_id": "gate_7_dcms_correctness",
+      "is_ready": false,
+      "missing_evidence": [
+        "dcms.synthetic_correctness",
+        "dcms.soft_group_calibration",
+        "dcms.soft_group_error_audit",
+        "dcms.frontier_audit",
+        "dcms.matched_utility_audit"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "dcms.synthetic_correctness",
+        "dcms.soft_group_calibration",
+        "dcms.soft_group_error_audit",
+        "dcms.frontier_audit",
+        "dcms.matched_utility_audit"
+      ],
+      "status": "blocked",
+      "title": "Gate 7: DCMS algorithm correctness"
+    },
+    "gate_8_main_results": {
+      "gate_id": "gate_8_main_results",
+      "is_ready": false,
+      "missing_evidence": [
+        "main.multiclass_run_records",
+        "main.dpo_run_records",
+        "main.matched_utility_results",
+        "main.composition_intervention_results"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "main.multiclass_run_records",
+        "main.dpo_run_records",
+        "main.matched_utility_results",
+        "main.composition_intervention_results"
+      ],
+      "status": "blocked",
+      "title": "Gate 8: downstream causal and main results"
+    },
+    "gate_9_statistics_fairness": {
+      "gate_id": "gate_9_statistics_fairness",
+      "is_ready": false,
+      "missing_evidence": [
+        "statistics.run_metric_comparison",
+        "statistics.budget_report",
+        "statistics.intervention_statistics"
+      ],
+      "present_evidence": [],
+      "required_evidence": [
+        "statistics.run_metric_comparison",
+        "statistics.budget_report",
+        "statistics.intervention_statistics"
+      ],
+      "status": "blocked",
+      "title": "Gate 9: statistics and fairness"
+    }
+  },
+  "is_ready": false,
+  "issues": [],
+  "missing_evidence_count": 37,
+  "output_path": "experiments/reports/gate_readiness.strict.current.json",
+  "ready_gate_count": 1,
+  "ready_gates": [
+    "gate_0_protocol_freeze"
+  ]
+}

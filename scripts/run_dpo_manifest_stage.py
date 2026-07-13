@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from mias_dcms.dpo_execution_manifest import DPO_EXECUTION_STAGES
+from mias_dcms.experiment_run_matrix import config_payload_sha256
 from mias_dcms.utils import read_json, write_json
 
 
@@ -26,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         description="Run one stage from a DPO execution manifest for matching planned runs."
     )
     parser.add_argument("--manifest_path", type=Path, required=True)
+    parser.add_argument(
+        "--config_path",
+        type=Path,
+        help="Require the manifest to match this source config before executing commands.",
+    )
     parser.add_argument("--stage", choices=DPO_EXECUTION_STAGES, required=True)
     parser.add_argument("--run_id")
     parser.add_argument("--method")
@@ -39,6 +45,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     manifest = read_json(args.manifest_path)
+    if args.config_path is not None:
+        expected_source_config_sha256 = config_payload_sha256(read_json(args.config_path))
+        observed_source_config_sha256 = str(manifest.get("source_config_sha256") or "")
+        if observed_source_config_sha256 != expected_source_config_sha256:
+            raise ValueError(
+                "manifest source config hash does not match --config_path; rebuild the run matrix and manifest"
+            )
     matched_runs = _matching_runs(
         manifest,
         run_id=args.run_id,
@@ -77,7 +90,7 @@ def main() -> None:
                 print(json.dumps(record, ensure_ascii=False, sort_keys=True))
                 continue
             completed = subprocess.run(
-                shlex.split(command_text),
+                _command_argv(command_text),
                 cwd=PROJECT_ROOT,
                 text=True,
                 capture_output=True,
@@ -141,6 +154,13 @@ def _attach_completed_output(record: dict[str, Any], *, stdout: str, stderr: str
     parsed_stdout = _parse_json_object(stdout_text)
     if parsed_stdout is not None:
         record["stdout_json_summary"] = _summarize_json_object(parsed_stdout)
+
+
+def _command_argv(command_text: str) -> list[str]:
+    argv = shlex.split(command_text)
+    if argv and argv[0] == "python":
+        argv[0] = sys.executable
+    return argv
 
 
 def _compact_text_field(prefix: str, text: str) -> dict[str, Any]:

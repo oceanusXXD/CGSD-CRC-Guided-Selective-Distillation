@@ -73,6 +73,23 @@ class PreferencePoolTest(unittest.TestCase):
         self.assertFalse(original.swap_manifest[0]["swapped"])
         self.assertTrue(swapped.swap_manifest[0]["swapped"])
 
+    def test_paired_swap_emits_pair_ids_for_position_audit(self) -> None:
+        fixed_pool = build_preference_fixed_pool(
+            [{
+                "id": "pair",
+                "prompt": "Prompt",
+                "response_a": "A text",
+                "response_b": "B text",
+                "chosen": "A",
+            }],
+            seed=2,
+            include_both_positions=True,
+        )
+
+        self.assertEqual(2, len(fixed_pool.active_pool))
+        self.assertEqual({"pair"}, {row["swap_pair_id"] for row in fixed_pool.active_pool})
+        self.assertEqual({"pair:original", "pair:swapped"}, set(fixed_pool.oracle_store))
+
 
 if __name__ == "__main__":
     unittest.main()
