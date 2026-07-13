@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from scripts.convert_jsonl import convert_rows
-from src.data import load_examples
+from mias_dcms.data import load_examples
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

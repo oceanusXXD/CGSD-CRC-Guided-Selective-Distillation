@@ -1,0 +1,43 @@
+from __future__ import annotations
+from typing import Any
+BINARY_POSITIVE_TEXT = '1'
+BINARY_NEGATIVE_TEXT = '0'
+BINARY_SCORE_SOURCE = '1_minus_0_logprob_margin'
+BINARY_SYSTEM_PROMPT = 'You are a precise binary classifier. Answer only "1" or "0"./no_think'
+BINARY_USER_PROMPT_TEMPLATE = 'Query: {query}\nDocument: {document}\nReturn "1" if the document satisfies the query; otherwise return "0".'
+
+def normalize_binary_label(value: Any, *, field_name: str) -> int:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == BINARY_POSITIVE_TEXT:
+            return 1
+        if normalized == BINARY_NEGATIVE_TEXT:
+            return 0
+    try:
+        label = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{field_name} must be binary 0/1, got {value!r}') from exc
+    if label not in {0, 1}:
+        raise ValueError(f'{field_name} must be binary 0/1, got {value!r}')
+    return label
+
+def normalize_binary_token(token: Any) -> str:
+    raw = str(token or '')
+    stripped = raw.strip().lower()
+    if stripped == BINARY_POSITIVE_TEXT:
+        return 'one'
+    if stripped == BINARY_NEGATIVE_TEXT:
+        return 'zero'
+    edge = ''.join((ch for ch in stripped if ch.isalpha() or ch.isdigit()))
+    if edge == BINARY_POSITIVE_TEXT:
+        return 'one'
+    if edge == BINARY_NEGATIVE_TEXT:
+        return 'zero'
+    return ''
+
+def canonical_binary_answer(label: int) -> str:
+    normalized = normalize_binary_label(label, field_name='label')
+    return BINARY_POSITIVE_TEXT if normalized == 1 else BINARY_NEGATIVE_TEXT
+
+def binary_user_prompt(query: str, document: str) -> str:
+    return BINARY_USER_PROMPT_TEMPLATE.format(query=query, document=document)

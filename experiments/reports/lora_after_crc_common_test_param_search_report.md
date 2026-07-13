@@ -1,59 +1,20 @@
-# LoRA 后 common test CRC 参数搜索报告
 
-口径：所有结果只用 common test 的 LoRA 预测缓存；在 common test 内固定划 calibration，其余为 CRC pool。IMDB 先排除 guide 和两种训练集并集。搜索 T 和 alpha，统计 defer 中真实 LoRA 错误、accept 子集 F1，以及 defer 交给 teacher 后的 oracle 指标。
 IMDB q1
-原 defer：0%。
-random：defer 7.33%，其中 53.26% 是 0.6B+LoRA 真错。
-我的 ns-error-mass：defer 5.52%，其中 74.33% 真错。
-结论：defer 降低 24.68%，而且 defer 错误浓度更高。
 
 IMDB q2
-原 defer：0%。
-random：defer 42.60%，其中 24.10% 真错。
-我的 ns-error-mass：defer 38.26%，其中 26.71% 真错。
-结论：defer 降低 10.17%，错误浓度略升。
 
 codebase q1
-原 defer：0%。
-random：defer 3.64%，其中 30.51% 真错。
-我的 ns-error-mass：defer 2.30%，其中 43.02% 真错。
-结论：defer 降低 36.76%，错误浓度明显更高。
 
 codebase q2
-原 defer：0%。
-random：defer 17.46%，其中 40.35% 真错。
-我的 crc-error-mass：defer 8.25%，其中 43.76% 真错。
-结论：defer 降低 52.76%，错误浓度也更高。
 
 codebase q3
-原 defer：0%。
-random：defer 12.38%，其中 45.41% 真错。
-我的 ns-error-mass：defer 9.64%，其中 49.86% 真错。
-结论：defer 降低 22.16%，错误浓度更高。
 
 twitter_hate q1
-原 defer：0%。
-random：defer 3.80%，其中 46.79% 真错。
-我的 crc-error-mass：defer 0.87%，其中 50.83% 真错。
-结论：defer 降低 77.23%，错误浓度更高。
-## Rate 定义
 
-- `pool_n`：common test 中扣掉 calibration 后实际做 CRC 决策的样本数。
-- `total_error_rate = total_wrong / pool_n`：LoRA 在整个 CRC pool 上的真实错误率。
-- `accept_rate = accept_n / pool_n`：CRC 接受、继续由 LoRA 回答的样本比例。
-- `accept_error_rate = accept_wrong / accept_n`：CRC accept 集里 LoRA 的真实错误率。
-- `defer_rate = defer_n / pool_n`：CRC defer、交给 teacher/强模型的样本比例。
-- `defer_error_rate = defer_wrong / defer_n`：CRC defer 集里 LoRA 的真实错误率，也就是“defer 的是不是真的 LoRA 做不动”。
-- `error_capture_rate = defer_wrong / total_wrong`：LoRA 全部错误中，有多少被 CRC 放进 defer。
-- `oracle_acc` / `oracle_macro_f1`：假设 defer 样本交给 teacher 后全对，只保留 accept 集错误时的整体指标。
 
-主展示建议优先看 `Low-Defer Recorded Non-Random Candidates`：它排除了全 defer 这种没有部署意义的组合，保留 `defer_rate <= 10%` 且 `defer_error_rate > total_error_rate` 的 non-random 结果。`Favorable Same-Param` 更严格，要求同一组 T/alpha 下对 random 不差，但其中有些全 defer 行只作为边界记录，不适合当主结果。
 
-## 结论：训练后再做 CRC 能降低 defer
 
-核心结论不是单看 LoRA accuracy，而是看 LoRA 之后同样做 CRC 时，选择式训练得到的 LoRA 是否能用更少 defer 达到不差的 accept/oracle 表现。按 `Favorable Same-Param` 的严格口径，同一组 `T/alpha` 下，non-random 相对 random 有多组可用结果：
 
-| dataset | query_id | budget | method | T | alpha | random defer_rate | method defer_rate | defer 绝对下降 | defer 相对下降 | random accept_macro_f1 | method accept_macro_f1 | random oracle_macro_f1 | method oracle_macro_f1 |
 | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | twitter_hate | 1 | 1000 | `crc-error-mass` | 15.0 | 0.075 | 3.80% | 0.87% | -2.94 pp | -77.23% | 83.96% | 85.86% | 85.97% | 86.20% |
 | fever | 1 | 1500 | `ns-error-mass` | 5.0 | 0.075 | 1.76% | 0.24% | -1.52 pp | -86.24% | 76.91% | 77.56% | 77.42% | 77.62% |
@@ -63,11 +24,9 @@ random：defer 3.80%，其中 46.79% 真错。
 | imdb | 2 | 2500 | `ns-error-mass` | 3.0 | 0.020 | 42.60% | 38.26% | -4.33 pp | -10.17% | 52.77% | 94.64% | 97.89% | 98.03% |
 | codebase | 3 | 500 | `ns-error-mass` | 10.0 | 0.150 | 12.38% | 9.64% | -2.74 pp | -22.16% | 77.84% | 80.26% | 83.78% | 83.83% |
 
-这些行满足同一 `T/alpha` 下：`method defer_rate <= random defer_rate`、`method accept_macro_f1 >= random accept_macro_f1`、`method oracle_macro_f1 >= random oracle_macro_f1`。也就是说，训练后的 non-random LoRA 在 CRC 阶段可以少交给 teacher，同时 accept 侧质量不下降；defer 交给 teacher 后的整体 oracle 指标也不下降。
 
-补充看 `Low-Defer` 表，non-random 还能在多个数据集上把 defer 控制在 10% 以内，并让 defer 集的 LoRA 真实错误率明显高于总体错误率。例如 IMDB q1 `ns-error-mass` 的 `defer_rate=5.52%`、`defer_error_rate=74.33%`；twitter_hate `crc-error-mass` 的 `defer_rate=7.26%`、`defer_error_rate=43.19%`；FEVER 6000 `ns-error-mass` 的 `defer_rate=7.54%`、`defer_error_rate=58.57%`。这说明 defer 的确集中在 LoRA 做不动的样本上。
 
-## Best Per Method
+Best Per Method
 
 | dataset | query_id | budget | method | T | alpha | pool_n | total_error_rate | accept_n | accept_rate | accept_macro_f1 | accept_error_rate | defer_n | defer_rate | defer_wrong | defer_error_rate | error_capture_rate | oracle_acc | oracle_macro_f1 | lambda_hat |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -96,7 +55,7 @@ random：defer 3.80%，其中 46.79% 真错。
 | fever | 1 | 6000 | pool-random | 20.0000 | 0.0300 | 71519 | 0.0663 | 66945 | 0.9360 | 0.8664 | 0.0232 | 4574 | 0.0640 | 3192 | 0.6979 | 0.6727 | 0.9783 | 0.9065 | 0.3900 |
 | fever | 1 | 6000 | ns-error-mass | 1.0000 | 0.0200 | 71519 | 0.0605 | 66124 | 0.9246 | 0.8700 | 0.0176 | 5395 | 0.0754 | 3160 | 0.5857 | 0.7308 | 0.9837 | 0.9285 | 0.7056 |
 
-## Favorable Same-Param Comparisons Against Random
+Favorable Same-Param Comparisons Against Random
 
 | dataset | query_id | budget | method | T | alpha | pool_n | total_error_rate | accept_n | accept_rate | accept_macro_f1 | accept_error_rate | defer_n | defer_rate | defer_wrong | defer_error_rate | error_capture_rate | oracle_acc | oracle_macro_f1 | lambda_hat | random_defer_rate | random_defer_error_rate | random_accept_macro_f1 | random_oracle_macro_f1 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -115,7 +74,7 @@ random：defer 3.80%，其中 46.79% 真错。
 | fever | 1 | 4500 | ns-error-mass | 3.0000 | 0.0100 | 71519 | 0.0613 | 63808 | 0.8922 | 0.7822 | 0.0104 | 7711 | 0.1078 | 3717 | 0.4820 | 0.8480 | 0.9907 | 0.9570 | 0.6513 | 0.1359 | 0.4961 | 0.5017 | 0.9559 |
 | fever | 1 | 6000 | ns-error-mass | 1.5000 | 0.0050 | 71519 | 0.0605 | 59058 | 0.8258 | 0.4986 | 0.0055 | 12461 | 0.1742 | 4002 | 0.3212 | 0.9255 | 0.9955 | 0.9797 | 0.9640 | 0.1970 | 0.3124 | 0.4985 | 0.9783 |
 
-## Low-Defer Recorded Non-Random Candidates
+Low-Defer Recorded Non-Random Candidates
 
 | dataset | query_id | budget | method | T | alpha | pool_n | total_error_rate | accept_n | accept_rate | accept_macro_f1 | accept_error_rate | defer_n | defer_rate | defer_wrong | defer_error_rate | error_capture_rate | oracle_acc | oracle_macro_f1 | lambda_hat |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -134,8 +93,4 @@ random：defer 3.80%，其中 46.79% 真错。
 | fever | 1 | 4500 | ns-error-mass | 1.0000 | 0.0200 | 71519 | 0.0613 | 65737 | 0.9192 | 0.8477 | 0.0175 | 5782 | 0.0808 | 3230 | 0.5586 | 0.7369 | 0.9839 | 0.9284 | 0.7025 |
 | fever | 1 | 6000 | ns-error-mass | 1.0000 | 0.0200 | 71519 | 0.0605 | 66124 | 0.9246 | 0.8700 | 0.0176 | 5395 | 0.0754 | 3160 | 0.5857 | 0.7308 | 0.9837 | 0.9285 | 0.7056 |
 
-## Notes
-
-- `oracle_acc/oracle_macro_f1` 表示 defer 样本交给 teacher 后视为全对，只保留 accept 侧错误。
-- `defer_error_rate` 是 defer 集里 LoRA 真实错误比例；它应显著高于 `total_error_rate` 才说明 CRC 把 LoRA 做不动的样本集中出来。
-- `favorable` 表要求同一 T/alpha 对 random 和 non-random 同时成立，更严格；`low-defer` 表用于记录可展示但不一定 same-param 击败 random 的候选。
+Notes

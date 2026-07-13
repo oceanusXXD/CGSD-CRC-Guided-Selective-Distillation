@@ -1,0 +1,33 @@
+{
+  "config_path": "configs/dpo_run_matrix.current.json",
+  "covered_budgets": [
+    100
+  ],
+  "covered_datasets": [
+    "helpsteer2_preference"
+  ],
+  "covered_methods": [
+    "Random",
+    "Reward Margin",
+    "APL",
+    "ActiveDPO",
+    "APL+DCMS",
+    "ActiveDPO+DCMS"
+  ],
+  "covered_models": [
+    "qwen3-0.6b"
+  ],
+  "covered_seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "expected_run_count": 30,
+  "is_ready": true,
+  "issues": [],
+  "output_matrix_path": "experiments/runs/dpo_main/current/run_matrix.jsonl",
+  "output_summary_path": "experiments/reports/dpo_main/current/run_matrix_summary.json",
+  "planned_run_count": 30
+}

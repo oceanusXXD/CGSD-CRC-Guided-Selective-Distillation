@@ -1,0 +1,59 @@
+{
+  "artifact_root": "experiments/runs/dpo_main",
+  "budgets": [
+    100
+  ],
+  "data_config": {
+    "split_manifest_path": "experiments/inputs/preference/split_manifest.json",
+    "prompt_clusters_path": "experiments/inputs/preference/prompt_clusters.jsonl",
+    "active_dpo_length_normalize": true,
+    "active_dpo_novelty_weight": 0.25
+  },
+  "datasets": [
+    "helpsteer2",
+    "tldr"
+  ],
+  "judge_config": {
+    "evaluator": "held_out_preference_labels",
+    "judge_prompt_hash": "fixed-human-labels-primary",
+    "judge_version": "fixed-human-labels-primary"
+  },
+  "evaluation_config": {
+    "capability_rows_path_template": "{run_dir}/capability_rows.jsonl",
+    "judge_rows_path_template": "{run_dir}/judge_rows.jsonl",
+    "preference_predictions_path_template": "{run_dir}/heldout_preference_predictions.jsonl"
+  },
+  "methods": [
+    "Random",
+    "Reward Margin",
+    "APL",
+    "ActiveDPO",
+    "APL+DCMS",
+    "ActiveDPO+DCMS"
+  ],
+  "models": [
+    "qwen-0.6b"
+  ],
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "training_config": {
+    "batch_size": 8,
+    "data_accumulation": "cumulative",
+    "generation_parameters": {
+      "max_new_tokens": 256,
+      "temperature": 0.0
+    },
+    "initialization": "shared_seed_policy_v1",
+    "learning_rate": 5e-6,
+    "model_name_or_path": "qwen-0.6b",
+    "optimizer": "adamw",
+    "prompt_format": "chatml_pairwise_v1",
+    "train_token_budget": 240000,
+    "update_steps": 120
+  }
+}

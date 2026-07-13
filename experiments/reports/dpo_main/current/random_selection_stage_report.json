@@ -1,0 +1,78 @@
+{
+  "command_count": 5,
+  "dry_run": false,
+  "failed_command_count": 0,
+  "limit": 0,
+  "manifest_path": "experiments/runs/dpo_main/current/execution_manifest.json",
+  "method": "Random",
+  "records": [
+    {
+      "command": "python scripts/select_preference_random.py --input_path experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl --output_dir experiments/runs/dpo_main/current/helpsteer2_preference/qwen3-0.6b/budget_100/seed_1/Random --budget 100 --seed 1",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "Random",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget100__seed1__random",
+      "seed": 1,
+      "stage": "selection",
+      "status": "complete",
+      "stderr": "",
+      "stdout": "{\"budget\": 100, \"input_path\": \"experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl\", \"method\": \"random\", \"pool_size\": 8677, \"seed\": 1, \"selected_count\": 100}"
+    },
+    {
+      "command": "python scripts/select_preference_random.py --input_path experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl --output_dir experiments/runs/dpo_main/current/helpsteer2_preference/qwen3-0.6b/budget_100/seed_2/Random --budget 100 --seed 2",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "Random",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget100__seed2__random",
+      "seed": 2,
+      "stage": "selection",
+      "status": "complete",
+      "stderr": "",
+      "stdout": "{\"budget\": 100, \"input_path\": \"experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl\", \"method\": \"random\", \"pool_size\": 8677, \"seed\": 2, \"selected_count\": 100}"
+    },
+    {
+      "command": "python scripts/select_preference_random.py --input_path experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl --output_dir experiments/runs/dpo_main/current/helpsteer2_preference/qwen3-0.6b/budget_100/seed_3/Random --budget 100 --seed 3",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "Random",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget100__seed3__random",
+      "seed": 3,
+      "stage": "selection",
+      "status": "complete",
+      "stderr": "",
+      "stdout": "{\"budget\": 100, \"input_path\": \"experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl\", \"method\": \"random\", \"pool_size\": 8677, \"seed\": 3, \"selected_count\": 100}"
+    },
+    {
+      "command": "python scripts/select_preference_random.py --input_path experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl --output_dir experiments/runs/dpo_main/current/helpsteer2_preference/qwen3-0.6b/budget_100/seed_4/Random --budget 100 --seed 4",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "Random",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget100__seed4__random",
+      "seed": 4,
+      "stage": "selection",
+      "status": "complete",
+      "stderr": "",
+      "stdout": "{\"budget\": 100, \"input_path\": \"experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl\", \"method\": \"random\", \"pool_size\": 8677, \"seed\": 4, \"selected_count\": 100}"
+    },
+    {
+      "command": "python scripts/select_preference_random.py --input_path experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl --output_dir experiments/runs/dpo_main/current/helpsteer2_preference/qwen3-0.6b/budget_100/seed_5/Random --budget 100 --seed 5",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "Random",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget100__seed5__random",
+      "seed": 5,
+      "stage": "selection",
+      "status": "complete",
+      "stderr": "",
+      "stdout": "{\"budget\": 100, \"input_path\": \"experiments/inputs/preference/helpsteer2_preference/active_pool.jsonl\", \"method\": \"random\", \"pool_size\": 8677, \"seed\": 5, \"selected_count\": 100}"
+    }
+  ],
+  "run_id": null,
+  "seed": null,
+  "stage": "selection"
+}

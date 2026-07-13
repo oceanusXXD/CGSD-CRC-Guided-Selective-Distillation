@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.crc import (
+from mias_dcms.crc import (
     apply_crc_defer_set,
     calibrate_crc,
     compute_crc_error_mass_plan,

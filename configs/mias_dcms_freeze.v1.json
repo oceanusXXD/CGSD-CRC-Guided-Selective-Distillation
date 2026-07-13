@@ -1,0 +1,172 @@
+{
+  "version": "mias-dcms-freeze-v1",
+  "tasks": {
+    "primary": "Active Preference Acquisition",
+    "controlled_validation": "Multi-class Active Distillation",
+    "legacy_evidence": "Binary Selective Distillation"
+  },
+  "datasets": {
+    "preference_main": [
+      "HelpSteer2-Preference",
+      "TL;DR human comparisons"
+    ],
+    "multiclass_main": [
+      "AG News",
+      "TREC"
+    ],
+    "legacy_binary": {
+      "source_count": 4,
+      "predicate_count": 7,
+      "role": "pilot evidence and appendix"
+    },
+    "appendix_candidates": [
+      "HH-RLHF",
+      "DBPedia",
+      "Emotion"
+    ]
+  },
+  "models": {
+    "selector_families": [
+      "Qwen instruct 1.5B-2B",
+      "non-Qwen instruct 2B-3B"
+    ],
+    "shared_reference_model": true,
+    "shared_initialization": true
+  },
+  "attributes": {
+    "preference_main": [
+      "length_gap_bins",
+      "response_source",
+      "prompt_embedding_cluster",
+      "ab_position",
+      "length_by_prompt_cluster"
+    ],
+    "multiclass_main": [
+      "cross_fitted_class_posterior",
+      "domain",
+      "source",
+      "length",
+      "embedding_cluster"
+    ],
+    "target_moments": {
+      "preference_default": "pool_prelabel_attribute_moments",
+      "multiclass_macro_default": "uniform_class_moments"
+    }
+  },
+  "baselines": {
+    "preference": [
+      "Random",
+      "Reward Margin",
+      "APL",
+      "ActiveDPO",
+      "APL+DCMS",
+      "ActiveDPO+DCMS"
+    ],
+    "multiclass": [
+      "Random",
+      "Entropy",
+      "BADGE",
+      "GALAXY",
+      "Entropy+DCMS",
+      "BADGE+DCMS"
+    ],
+    "ablations": [
+      "moment-matched Random",
+      "w/o robust intervals",
+      "fixed epsilon",
+      "w/o entropy",
+      "IPW only"
+    ]
+  },
+  "metrics": {
+    "selection": [
+      "acquisition_tv",
+      "maximum_propensity_ratio",
+      "utility_retained",
+      "constraint_violation",
+      "selected_distribution_prediction_error"
+    ],
+    "multiclass": [
+      "accuracy",
+      "macro_f1",
+      "worst_class_f1",
+      "aulc"
+    ],
+    "preference": [
+      "preference_accuracy",
+      "length_controlled_win_rate",
+      "worst_group",
+      "capability_regression",
+      "aulc"
+    ],
+    "cost": [
+      "oracle_label_calls",
+      "seed_labels",
+      "judge_calls",
+      "selector_compute",
+      "training_tokens"
+    ]
+  },
+  "budget": {
+    "total_formula": "B_total = B_seed + sum(B_active_rounds)",
+    "seed_labels_counted": true,
+    "group_estimator_labels_counted": true,
+    "guide_labels_counted": true,
+    "evaluation_labels_reported_separately": true,
+    "hidden_extra_guide_labels_allowed": false
+  },
+  "label_isolation": {
+    "selector_forbidden_fields": [
+      "chosen",
+      "rejected",
+      "preference_label",
+      "preference_strength",
+      "justification",
+      "oracle_label",
+      "true_class",
+      "test_metric"
+    ],
+    "oracle_labels_separate_store": true,
+    "selection_before_oracle_read": true
+  },
+  "dcms": {
+    "utility_normalization": "rank",
+    "main_kappa": 0.05,
+    "kappa_ablation": [
+      0.02,
+      0.05,
+      0.1
+    ],
+    "slack_grid": [
+      0.0,
+      0.01,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.5
+    ],
+    "save_continuous_propensity": true,
+    "save_rounding_seed": true,
+    "save_expected_and_actual_moments": true
+  },
+  "interventions": {
+    "class_intercept_alpha_count_minimum": 5,
+    "length_gamma_count_minimum": 5,
+    "requires_negative_zero_positive_values": true,
+    "random_control_required": true
+  },
+  "frozen_before_main_experiments": [
+    "datasets",
+    "model_families",
+    "splits",
+    "baselines",
+    "metrics",
+    "attributes",
+    "target_moments",
+    "budget_formula",
+    "slack_grid",
+    "kappa",
+    "seed_list"
+  ]
+}

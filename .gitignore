@@ -21,6 +21,16 @@ runs/
 logs/
 wandb/
 
+# Generated experiment trees. Keep compact docs/summaries in git; keep
+# dataset/model/stage fan-out artifacts local.
+experiments/eval_splits/
+experiments/inputs/*
+!experiments/inputs/README.md
+experiments/table5_pcss/inputs/*
+!experiments/table5_pcss/runs/
+experiments/table5_pcss/runs/*
+!experiments/table5_pcss/runs/pcss_fixed_select_summary_20260526.csv
+
 # Local model weights and large ML artifacts
 model/
 models/

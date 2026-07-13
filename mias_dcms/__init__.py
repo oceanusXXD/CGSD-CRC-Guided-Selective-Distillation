@@ -1,0 +1,329 @@
+"""MIAS/DCMS active research package."""
+
+from mias_dcms.auditing.mias import (
+    GroupPropensity,
+    MIASSelectionAudit,
+    PropensityIdentityReport,
+    acquisition_tv,
+    maximum_propensity_ratio,
+    mias_selection_audit,
+    propensity_identity_report,
+)
+from mias_dcms.budgeting import (
+    BudgetInputs,
+    BudgetReport,
+    build_budget_report,
+    compare_budget_reports,
+)
+from mias_dcms.dpo_run_pack import (
+    DPO_MAIN_METHODS,
+    DPORunPackValidationReport,
+    REQUIRED_DPO_COST_METRICS,
+    REQUIRED_DPO_EVALUATION_METRICS,
+    REQUIRED_DPO_SELECTION_METRICS,
+    REQUIRED_DPO_TRAINING_METRICS,
+    validate_dpo_run_pack,
+    validate_paper_artifact_manifest,
+)
+from mias_dcms.dpo_execution_manifest import (
+    DPO_EXECUTION_STAGES,
+    DPOExecutionManifestValidationReport,
+    REQUIRED_DPO_EXECUTION_ARTIFACTS,
+    build_dpo_execution_manifest,
+    validate_dpo_execution_manifest,
+)
+from mias_dcms.dpo_execution_status import (
+    DPOExecutionStatusReport,
+    audit_dpo_execution_status,
+)
+from mias_dcms.dpo_run_record_collection import (
+    DPORunRecordCollectionReport,
+    collect_dpo_run_records,
+)
+from mias_dcms.experiment_run_matrix import (
+    ExperimentRunMatrixValidationReport,
+    REQUIRED_EXPERIMENT_ARTIFACTS,
+    REQUIRED_JUDGE_CONFIG_FIELDS,
+    REQUIRED_TRAINING_CONFIG_FIELDS,
+    build_experiment_run_id,
+    build_experiment_run_matrix,
+    validate_experiment_run_matrix,
+)
+from mias_dcms.experiment_gate_readiness import (
+    ExperimentGateReadinessReport,
+    ExperimentGateSpec,
+    audit_experiment_gate_readiness,
+)
+from mias_dcms.composition import (
+    MatchedUtilityReport,
+    UtilityQuantileProfile,
+    coverage_deviation,
+    matched_utility_report,
+    utility_quantile_profile,
+)
+from mias_dcms.interventions import (
+    ResponseCurve,
+    ResponseCurvePoint,
+    apply_class_intercept,
+    apply_length_coefficient,
+    entropy_scores_from_logits,
+    fixed_budget_response_curve,
+    normalized_length_gap,
+)
+from mias_dcms.intervention_statistics import (
+    InterventionStatisticsReport,
+    audit_intervention_response_statistics,
+)
+from mias_dcms.multiclass_protocol import (
+    ClassPrior,
+    build_fixed_multiclass_splits,
+    pool_class_prior,
+    validate_disjoint_splits,
+)
+from mias_dcms.paper_claim_audit import (
+    BANNED_CLAIM_PATTERNS,
+    PaperClaimAuditReport,
+    audit_paper_claim_evidence,
+    audit_paper_text_claims,
+)
+from mias_dcms.paper_artifacts import (
+    DEFAULT_FIGURES,
+    DEFAULT_MAIN_TABLES,
+    build_paper_artifact_pack,
+)
+from mias_dcms.preference_pool import (
+    FORBIDDEN_SELECTOR_FIELDS,
+    PreferenceFixedPool,
+    build_preference_fixed_pool,
+    normalized_response_length_gap,
+)
+from mias_dcms.preference_split_manifest import build_preference_split_manifest
+from mias_dcms.preference_logprob_audit import audit_preference_logprobs
+from mias_dcms.preference_logprob_generation import (
+    PreferenceLogprobSequence,
+    build_preference_logprob_rows,
+    build_preference_logprob_sequences,
+    format_preference_prompt,
+    score_preference_logprob_sequences,
+)
+from mias_dcms.preference_experiment_preflight import (
+    PreferenceExperimentPreflightInputs,
+    PreferenceExperimentPreflightReport,
+    audit_preference_experiment_preflight,
+)
+from mias_dcms.preference_evaluation import (
+    build_preference_evaluation_metrics,
+    capability_regression,
+    length_controlled_win_rate,
+    preference_accuracy,
+    raw_judge_win_rate,
+    worst_group_preference_accuracy,
+)
+from mias_dcms.preference_intervention_audit import (
+    audit_ab_position_intervention,
+    audit_length_gamma_intervention,
+    audit_selector_replacement,
+)
+from mias_dcms.preference_acquisition_audit import audit_preference_acquisition
+from mias_dcms.preference_selector_audit import audit_preference_selector_scores
+from mias_dcms.records import (
+    AcquisitionRecord,
+    RunRecord,
+    build_acquisition_record,
+    build_records_from_dcms,
+    build_run_record,
+)
+from mias_dcms.result_aggregation import (
+    REQUIRED_COST_METRICS,
+    aggregate_paper_metric_table,
+    validate_run_record_for_paper_table,
+)
+from mias_dcms.result_freeze_pack import (
+    ALLOWED_FREEZE_POLICIES,
+    ResultFreezePackValidationReport,
+    validate_result_freeze_pack,
+)
+from mias_dcms.run_metric_comparison import (
+    RunMetricComparisonReport,
+    compare_run_metrics_to_baseline,
+)
+from mias_dcms.selection.dcms import (
+    DCMSFrontierPoint,
+    DCMSResult,
+    DCMSSlackTrace,
+    DCMSUtilityCoverageFrontier,
+    dcms_utility_coverage_frontier,
+    rank_normalize_utilities,
+    solve_dcms,
+    solve_dcms_with_slack,
+)
+from mias_dcms.selectors import (
+    FORBIDDEN_SELECTOR_INPUT_FIELDS,
+    MomentMatchedRandomResult,
+    assert_selector_rows_are_label_safe,
+    entropy_uncertainty_scores,
+    margin_uncertainty_scores,
+    moment_matched_random,
+    random_without_replacement,
+    select_top_budget,
+)
+from mias_dcms.soft_groups import (
+    IntervalCoverageReport,
+    SoftGroupCalibrationReport,
+    SoftGroupIntervalReport,
+    SoftGroupIntervalRow,
+    build_soft_group_intervals,
+    build_soft_group_intervals_from_rows,
+    interval_coverage_report,
+    soft_group_calibration_report,
+)
+from mias_dcms.soft_group_error import (
+    SoftGroupErrorAudit,
+    SoftGroupErrorSelectionAudit,
+    soft_group_error_audit,
+)
+from mias_dcms.statistics import (
+    MetricSummary,
+    PermutationTestResult,
+    bootstrap_mean_ci,
+    paired_mean_delta,
+    paired_permutation_test,
+    summarize_metric_by_method,
+)
+
+__all__ = [
+    "AcquisitionRecord",
+    "BudgetInputs",
+    "BudgetReport",
+    "ClassPrior",
+    "DCMSFrontierPoint",
+    "DCMSResult",
+    "DCMSSlackTrace",
+    "DCMSUtilityCoverageFrontier",
+    "DPO_MAIN_METHODS",
+    "DPO_EXECUTION_STAGES",
+    "DPOExecutionManifestValidationReport",
+    "DPOExecutionStatusReport",
+    "DPORunRecordCollectionReport",
+    "DPORunPackValidationReport",
+    "ExperimentGateReadinessReport",
+    "ExperimentGateSpec",
+    "ExperimentRunMatrixValidationReport",
+    "FORBIDDEN_SELECTOR_FIELDS",
+    "FORBIDDEN_SELECTOR_INPUT_FIELDS",
+    "GroupPropensity",
+    "MIASSelectionAudit",
+    "MatchedUtilityReport",
+    "MetricSummary",
+    "MomentMatchedRandomResult",
+    "PermutationTestResult",
+    "PaperClaimAuditReport",
+    "PreferenceFixedPool",
+    "PreferenceExperimentPreflightInputs",
+    "PreferenceExperimentPreflightReport",
+    "PropensityIdentityReport",
+    "PreferenceLogprobSequence",
+    "ResponseCurve",
+    "ResponseCurvePoint",
+    "ResultFreezePackValidationReport",
+    "RunRecord",
+    "RunMetricComparisonReport",
+    "IntervalCoverageReport",
+    "InterventionStatisticsReport",
+    "SoftGroupCalibrationReport",
+    "SoftGroupErrorAudit",
+    "SoftGroupErrorSelectionAudit",
+    "SoftGroupIntervalReport",
+    "SoftGroupIntervalRow",
+    "UtilityQuantileProfile",
+    "REQUIRED_COST_METRICS",
+    "REQUIRED_DPO_COST_METRICS",
+    "REQUIRED_DPO_EVALUATION_METRICS",
+    "REQUIRED_DPO_SELECTION_METRICS",
+    "REQUIRED_DPO_TRAINING_METRICS",
+    "REQUIRED_DPO_EXECUTION_ARTIFACTS",
+    "REQUIRED_EXPERIMENT_ARTIFACTS",
+    "REQUIRED_JUDGE_CONFIG_FIELDS",
+    "REQUIRED_TRAINING_CONFIG_FIELDS",
+    "BANNED_CLAIM_PATTERNS",
+    "DEFAULT_FIGURES",
+    "DEFAULT_MAIN_TABLES",
+    "ALLOWED_FREEZE_POLICIES",
+    "acquisition_tv",
+    "aggregate_paper_metric_table",
+    "apply_class_intercept",
+    "apply_length_coefficient",
+    "assert_selector_rows_are_label_safe",
+    "audit_ab_position_intervention",
+    "audit_dpo_execution_status",
+    "audit_length_gamma_intervention",
+    "audit_intervention_response_statistics",
+    "audit_paper_claim_evidence",
+    "audit_paper_text_claims",
+    "audit_preference_acquisition",
+    "audit_preference_experiment_preflight",
+    "audit_preference_logprobs",
+    "audit_preference_selector_scores",
+    "audit_selector_replacement",
+    "audit_experiment_gate_readiness",
+    "bootstrap_mean_ci",
+    "build_budget_report",
+    "build_preference_evaluation_metrics",
+    "build_fixed_multiclass_splits",
+    "build_acquisition_record",
+    "build_records_from_dcms",
+    "build_run_record",
+    "build_soft_group_intervals",
+    "build_soft_group_intervals_from_rows",
+    "build_preference_fixed_pool",
+    "build_preference_logprob_rows",
+    "build_preference_logprob_sequences",
+    "build_preference_split_manifest",
+    "build_paper_artifact_pack",
+    "build_experiment_run_id",
+    "build_experiment_run_matrix",
+    "build_dpo_execution_manifest",
+    "coverage_deviation",
+    "dcms_utility_coverage_frontier",
+    "compare_budget_reports",
+    "compare_run_metrics_to_baseline",
+    "collect_dpo_run_records",
+    "capability_regression",
+    "entropy_uncertainty_scores",
+    "entropy_scores_from_logits",
+    "fixed_budget_response_curve",
+    "format_preference_prompt",
+    "interval_coverage_report",
+    "length_controlled_win_rate",
+    "matched_utility_report",
+    "maximum_propensity_ratio",
+    "margin_uncertainty_scores",
+    "mias_selection_audit",
+    "moment_matched_random",
+    "normalized_length_gap",
+    "normalized_response_length_gap",
+    "paired_mean_delta",
+    "paired_permutation_test",
+    "pool_class_prior",
+    "preference_accuracy",
+    "propensity_identity_report",
+    "rank_normalize_utilities",
+    "raw_judge_win_rate",
+    "random_without_replacement",
+    "score_preference_logprob_sequences",
+    "select_top_budget",
+    "soft_group_calibration_report",
+    "soft_group_error_audit",
+    "solve_dcms",
+    "solve_dcms_with_slack",
+    "summarize_metric_by_method",
+    "utility_quantile_profile",
+    "validate_dpo_run_pack",
+    "validate_dpo_execution_manifest",
+    "validate_experiment_run_matrix",
+    "validate_paper_artifact_manifest",
+    "validate_run_record_for_paper_table",
+    "validate_result_freeze_pack",
+    "validate_disjoint_splits",
+    "worst_group_preference_accuracy",
+]

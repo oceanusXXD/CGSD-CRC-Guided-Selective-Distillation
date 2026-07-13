@@ -1,6 +1,4 @@
-# LoRA 后在 common test 上重新做 CRC 的 defer 真实错误统计
 
-口径：只使用 LoRA 推理缓存；在 common test 内固定划 calibration，其余作为 CRC pool。IMDB 从 full-all 缓存中过滤 guide 与两种训练集并集后作为 common test。
 
 | dataset | query_id | budget | method | common_n | calib_n | pool_n | total_error_rate | lambda_hat | defer_n | defer_rate | defer_wrong | defer_error_rate | error_capture_rate | accept_error_rate | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

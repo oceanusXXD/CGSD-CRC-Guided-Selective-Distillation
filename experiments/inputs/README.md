@@ -1,49 +1,72 @@
 # Experiment Inputs
 
-This directory is the durable input surface for experiments. It should contain
-source data, embeddings, reusable split definitions, and round0 caches that are
-expensive or important to reproduce. It should not contain LoRA adapters,
-checkpoints, transient run logs, or per-run prediction dumps.
+This directory is the durable input surface for MIAS/DCMS experiments. It should
+contain source data, reusable split definitions, compact benchmark smoke inputs,
+and round-0 caches that are expensive or important to reproduce. It should not
+contain LoRA adapters, checkpoints, transient run logs, or per-run prediction
+dumps.
 
-All task data must use `id/query/document/groundtruth` JSONL rows.
+Task data must use stable ids and task-appropriate selector-safe fields. Legacy
+binary selective-distillation rows use `id/query/document/groundtruth` JSONL.
+Current multiclass and preference benchmark rows are prepared through
+`scripts/benchmark_pipeline.py`, `scripts/prepare_multiclass_splits.py`, or
+`scripts/prepare_preference_pool.py`.
 
 ## Current Layout
 
 ```text
-lrobench/
-  data.jsonl
-  embeddings.npy
-  embeddings.ids.jsonl
-  embeddings.meta.json
-
-fever/
-  data.jsonl
-  embeddings.npy
-  embeddings.ids.jsonl
-  embeddings.meta.json
-  cgsd_split_ids.json
-  round_0/                         # FEVER 0.6B round0 baseline cache
-  qwen17b_alpha010_t1_seed1/
-    round_0/                       # FEVER 1.7B, T=1 round0 CRC cache
-  qwen17b_alpha010_t15_seed1/
-    round_0/                       # FEVER 1.7B, T=15 round0 prediction/CRC cache
-  recalibrated_T1/
-  recalibrated_T10/
-  balanced_lora_subsets_seed1/     # reusable FEVER subset definitions
+benchmarks/
+  ag_news/
+    train.jsonl
+    test.jsonl
+    dataset_summary.json
+    qwen3_0.6b_*.jsonl
+    qwen3_0.6b_*.summary.json
+  dbpedia_14/
+    train_5000_per_class.jsonl
+    test.jsonl
+    dataset_summary.json
+    qwen3_0.6b_*.jsonl
+    qwen3_0.6b_*.summary.json
+  helpsteer2_preference/
+    train.jsonl
+    val.jsonl
+    dataset_summary.json
+    qwen3_0.6b_*.jsonl
+    qwen3_0.6b_*.summary.json
+preference/
+  helpsteer2_preference/
+    active_pool.jsonl
+    oracle_store.json
+    pool_summary.json
+    split_manifest.json
+    split_summary.json
+    swap_manifest.json
+  smoke_shift_gate.json
 ```
 
+If a legacy binary input directory is restored locally for re-audit,
 `embeddings.npy` must have a matching `embeddings.ids.jsonl` sidecar and must
-cover every `id` in `data.jsonl` when running `scripts/cgsd_prepare.py`.
+cover every `id` in `data.jsonl` when running `scripts/prepare.py`.
 
 ## Retention Policy
 
-- Keep FEVER original 0.6B and 1.7B round0 data/caches.
-- Keep source `data.jsonl`, embeddings, metadata, and reusable split/subset files.
-- Keep result summaries in `experiments/runs/` as CSV/Markdown.
-- Remove generated adapters, checkpoints, JSONL prediction dumps, and old one-off
-  generated subsets unless they are round0 source caches.
+- Keep compact benchmark smoke inputs and summaries needed by repository tests.
+- Keep source JSONL, metadata, and reusable split/subset files when they are
+  small enough to review.
+- Keep result summaries in `experiments/runs/` or `experiments/reports/` as
+  CSV/Markdown.
+- Remove generated adapters, checkpoints, large JSONL prediction dumps, and
+  old one-off generated subsets unless they are required round-0 source caches.
 
-Current status:
+## Current Status
 
-- `lrobench` is ready for CGSD with `DIM=2560`.
-- `fever` has source JSONL, embeddings, and preserved 0.6B/1.7B round0 caches.
+- Current tracked inputs are under `benchmarks/` for AG News, DBPedia-14, and
+  HelpSteer2-Preference smoke workflows.
+- Current preference fixed-pool artifacts under `preference/helpsteer2_preference/`
+  are generated from `benchmarks/helpsteer2_preference/train.jsonl` with seed
+  `20260712`; they cover selector-safe active rows, oracle labels, A/B swaps,
+  and a fixed seed/active/heldout/test split manifest.
+- Large FEVER, IMDb, and other binary-task input trees have been removed from
+  the active tree. Their compact evidence is retained in
+  `experiments/reports/binary_legacy/` and related report files.

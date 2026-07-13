@@ -1,17 +1,9 @@
-#!/usr/bin/env python
-"""Select uncertain rows while matching the guide label distribution."""
-
 from __future__ import annotations
-
 import sys
 from pathlib import Path
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
 from scripts.selection_common import main
-
-
-if __name__ == "__main__":
-    main(method="pcss", description=__doc__ or "")
+if __name__ == '__main__':
+    main(method='pcss', description=__doc__ or '')
