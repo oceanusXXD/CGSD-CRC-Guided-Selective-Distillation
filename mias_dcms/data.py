@@ -4,9 +4,15 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-import torch
-from torch.utils.data import Dataset
 from .binary_protocol import BINARY_SYSTEM_PROMPT, binary_user_prompt, canonical_binary_answer, normalize_binary_label
+from .utils import _require_torch
+
+try:
+    from torch.utils.data import Dataset
+except ModuleNotFoundError:  # pragma: no cover - exercised by lightweight runtime consumers
+    class Dataset:  # type: ignore[no-redef]
+        pass
+
 T = TypeVar('T')
 EMPTY_THINKING_BLOCK = '<think>\n\n</think>\n\n'
 
@@ -263,6 +269,7 @@ class GenerationPairCollator:
         self.pad_to_multiple_of = pad_to_multiple_of
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
+        torch = _require_torch()
         sample_ids = [str(feature['sample_id']) for feature in features]
         target_labels = torch.tensor([feature['target_label'] for feature in features], dtype=torch.float)
         sample_weights = torch.tensor([float(feature.get('sample_weight', 1.0)) for feature in features], dtype=torch.float)

@@ -53,6 +53,7 @@ class CodebaseCleanlinessTest(unittest.TestCase):
             "compare_run_metrics.py",
             "compute_crc.py",
             "convert_jsonl.py",
+            "download_binary_benchmarks.py",
             "generate_preference_logprobs.py",
             "make_pcss_eval_split.py",
             "materialize_preference_dpo_evaluation.py",

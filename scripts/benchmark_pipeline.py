@@ -38,19 +38,8 @@ from mias_dcms.sampling_diagnostics import (  # noqa: E402
     selector_safe_view,
     uncertainty_group_dependence_report,
 )
-from mias_dcms.benchmark_training import (  # noqa: E402
-    LoraTrainingConfig,
-    train_classification_lora,
-    train_preference_dpo,
-)
 from mias_dcms.evaluation_comparison import compare_scored_models  # noqa: E402
 from mias_dcms.shift_gate import analyze_classification_shift, analyze_preference_shift  # noqa: E402
-from mias_dcms.zero_shot_scoring import (  # noqa: E402
-    CausalCandidateScorer,
-    build_classification_messages,
-    build_pairwise_messages,
-    label_codes,
-)
 
 
 def parse_args() -> argparse.Namespace:
@@ -561,6 +550,8 @@ def run_preference_scoring(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_classification_training(args: argparse.Namespace) -> dict[str, Any]:
+    from mias_dcms.benchmark_training import train_classification_lora
+
     rows = _read_jsonl(args.train_path)
     label_names = _resolve_label_names(rows, args.label_names)
     summary = train_classification_lora(
@@ -573,6 +564,8 @@ def run_classification_training(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_dpo_training(args: argparse.Namespace) -> dict[str, Any]:
+    from mias_dcms.benchmark_training import train_preference_dpo
+
     rows = _read_jsonl(args.train_path)
     summary = train_preference_dpo(rows, config=_training_config(args, beta=args.beta))
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -658,9 +651,11 @@ def score_classification_rows(
     row_batch_size: int,
     save_representations: bool = False,
 ) -> list[dict[str, Any]]:
+    from mias_dcms.zero_shot_scoring import build_classification_messages
+
     if row_batch_size <= 0:
         raise ValueError("row_batch_size must be positive")
-    candidates = label_codes(len(label_names))
+    candidates = _label_codes(len(label_names))
     scored: list[dict[str, Any]] = []
     for start in range(0, len(rows), row_batch_size):
         batch = rows[start : start + row_batch_size]
@@ -736,6 +731,8 @@ def score_preference_rows(
     scorer: Any,
     row_batch_size: int,
 ) -> list[dict[str, Any]]:
+    from mias_dcms.zero_shot_scoring import build_pairwise_messages
+
     if row_batch_size <= 0:
         raise ValueError("row_batch_size must be positive")
     scored: list[dict[str, Any]] = []
@@ -1127,7 +1124,9 @@ def _parse_methods(value: str) -> list[str]:
     return methods
 
 
-def _load_scorer(args: argparse.Namespace) -> CausalCandidateScorer:
+def _load_scorer(args: argparse.Namespace) -> Any:
+    from mias_dcms.zero_shot_scoring import CausalCandidateScorer
+
     device_map = None if str(args.device_map).lower() in {"none", "cpu"} else args.device_map
     return CausalCandidateScorer.from_pretrained(
         args.model,
@@ -1139,7 +1138,9 @@ def _load_scorer(args: argparse.Namespace) -> CausalCandidateScorer:
     )
 
 
-def _training_config(args: argparse.Namespace, *, beta: float = 0.1) -> LoraTrainingConfig:
+def _training_config(args: argparse.Namespace, *, beta: float = 0.1) -> Any:
+    from mias_dcms.benchmark_training import LoraTrainingConfig
+
     target_modules = tuple(item.strip() for item in args.target_modules.split(",") if item.strip())
     if not target_modules:
         raise ValueError("target_modules cannot be empty")
@@ -1170,7 +1171,7 @@ def _training_config(args: argparse.Namespace, *, beta: float = 0.1) -> LoraTrai
 def _resolve_label_names(rows: list[dict[str, Any]], explicit: str | None) -> list[str]:
     if explicit:
         label_names = [item.strip() for item in explicit.split(",") if item.strip()]
-        label_codes(len(label_names))
+        _label_codes(len(label_names))
         return label_names
     dataset_name = str(rows[0].get("dataset", "")) if rows else ""
     if dataset_name == "ag_news":
@@ -1187,6 +1188,12 @@ def _resolve_label_names(rows: list[dict[str, Any]], explicit: str | None) -> li
     if names_by_label and sorted(names_by_label) == list(range(len(names_by_label))):
         return [names_by_label[index] for index in range(len(names_by_label))]
     raise ValueError("could not infer label names; pass --label-names")
+
+
+def _label_codes(count: int) -> list[str]:
+    if not 2 <= count <= 26:
+        raise ValueError("label count must be between 2 and 26")
+    return [chr(ord("A") + index) for index in range(count)]
 
 
 def _uncertainty_fields(probabilities: Any) -> dict[str, float]:

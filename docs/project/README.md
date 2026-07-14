@@ -9,6 +9,7 @@ This directory contains the planning and acceptance documents for the MIAS/DCMS 
 - `03_开发与实验验收清单_MIAS_DCMS.md`: gate-by-gate acceptance checklist.
 - `04_当前迁移开发验收状态_MIAS_DCMS.md`: current code migration and development acceptance status.
 - `05_下一阶段实验规划_MIAS_DCMS.md`: evidence-based ordering, run matrix, stop/go rules, and completion criteria for the next experiments.
+- `06_Qwen06B_T4_串行执行队列.md`: task-isolated binary, multiclass, and DPO execution order for the Qwen3-0.6B T4 study.
 
 ## Current File Tree Contract
 

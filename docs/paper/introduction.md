@@ -1,5 +1,9 @@
-# Superseded Draft
+# Introduction Entry Point
 
-The previous CRC/PCSS-centered introduction has been archived at `docs/archive/emnlp_legacy/introduction_emnlp_pcss.md`.
+The previous CRC/PCSS-centered introduction remains archived at
+`docs/archive/emnlp_legacy/introduction_emnlp_pcss.md`.
 
-The canonical AAAI long-paper direction is `docs/aaai_long_paper_direction.md`. A new manuscript introduction should be drafted only after the full multiclass evidence is available and the HelpSteer2 pairwise scorer passes the reliability gate.
+Draft the new introduction from `docs/paper/aaai_manuscript_blueprint.md` only
+after the multiclass transmission experiment and the HelpSteer2 scorer
+reliability gate have passed. Do not write cross-task results before the
+corresponding run records exist.

@@ -34,6 +34,21 @@ benchmarks/
     dataset_summary.json
     qwen3_0.6b_*.jsonl
     qwen3_0.6b_*.summary.json
+binary/
+  imdb/
+    train.jsonl
+    test.jsonl
+    source_manifest.json
+  paws_labeled_final/
+    train.jsonl
+    validation.jsonl
+    test.jsonl
+    source_manifest.json
+  tweeteval_hate/
+    train.jsonl
+    validation.jsonl
+    test.jsonl
+    source_manifest.json
 preference/
   helpsteer2_preference/
     active_pool.jsonl
@@ -63,6 +78,10 @@ cover every `id` in `data.jsonl` when running `scripts/prepare.py`.
 
 - Current tracked inputs are under `benchmarks/` for AG News, DBPedia-14, and
   HelpSteer2-Preference smoke workflows.
+- Native-label binary inputs are generated locally under `binary/` by
+  `scripts/download_binary_benchmarks.py`. Each dataset directory contains the
+  official split boundaries in the repository's `id/query/document/groundtruth`
+  schema and a pinned-source manifest with output hashes and label counts.
 - Current preference fixed-pool artifacts under `preference/helpsteer2_preference/`
   are generated from `benchmarks/helpsteer2_preference/train.jsonl` with seed
   `20260712`; they cover selector-safe active rows, oracle labels, A/B swaps,

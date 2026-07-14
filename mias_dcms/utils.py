@@ -4,22 +4,45 @@ import os
 import random
 from pathlib import Path
 from typing import Any
-import numpy as np
-import torch
+
+
+def _require_numpy() -> Any:
+    try:
+        import numpy as np
+    except ModuleNotFoundError as exc:
+        raise RuntimeError('NumPy is required for reproducible model seeding') from exc
+    return np
+
+
+def _require_torch() -> Any:
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise RuntimeError('PyTorch is required for model runtime utilities') from exc
+    return torch
 
 def set_seed(seed: int) -> None:
     random.seed(seed)
-    np.random.seed(seed)
+    try:
+        _require_numpy().random.seed(seed)
+    except RuntimeError:
+        pass
+    try:
+        torch = _require_torch()
+    except RuntimeError:
+        return
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 def get_device(device_name: str='auto') -> torch.device:
+    torch = _require_torch()
     if device_name == 'auto':
         return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     return torch.device(device_name)
 
 def configure_torch_performance(enable_tf32: bool=True) -> None:
+    torch = _require_torch()
     if not torch.cuda.is_available():
         return
     if enable_tf32:
@@ -33,6 +56,7 @@ def parse_torch_dtype(dtype_name: str) -> torch.dtype | str | None:
         return 'auto'
     if dtype_name == 'none':
         return None
+    torch = _require_torch()
     if dtype_name == 'float16':
         return torch.float16
     if dtype_name == 'bfloat16':
@@ -57,6 +81,7 @@ def disable_tokenizer_thinking(tokenizer: Any) -> None:
         init_kwargs.pop('chat_template', None)
 
 def move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
+    torch = _require_torch()
     moved: dict[str, Any] = {}
     for key, value in batch.items():
         moved[key] = value.to(device, non_blocking=True) if torch.is_tensor(value) else value

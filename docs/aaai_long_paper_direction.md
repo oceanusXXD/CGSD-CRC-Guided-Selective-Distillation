@@ -1,6 +1,11 @@
-# AAAI 长文研究方向：Selector-Induced Supervision Shift
+# Archived AAAI Direction Notes: Selector-Induced Supervision Shift
 
-> 状态：当前论文方向的唯一主文档。
+> Status: research notes. The active manuscript blueprint is
+> `docs/paper/aaai_manuscript_blueprint.md`.
+>
+> Terminology note: this historical direction uses SISS/DGA. The active code,
+> protocol, and manuscript use MIAS/DCMS; do not mix the two naming systems in
+> a submission.
 >
 > 目标：将已有二分类发现扩展为一个覆盖二分类、多分类和偏好学习的通用现象，并围绕统一诊断与统一纠正方法组织 AAAI 长文。
 >

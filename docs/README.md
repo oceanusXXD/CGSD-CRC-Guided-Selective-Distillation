@@ -8,6 +8,7 @@ This directory keeps active paper materials, archived drafts, and reference arti
 - `aaai_long_paper_direction.md`: current AAAI-oriented paper direction.
 - `paper/introduction.md`: active introduction draft.
 - `paper/paper_outline_final.md`: active paper outline.
+- `paper/aaai_manuscript_blueprint.md`: evidence-bounded AAAI manuscript structure and writing order.
 
 ## Archived Documents
 

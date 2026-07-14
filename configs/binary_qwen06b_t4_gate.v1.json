@@ -1,0 +1,57 @@
+{
+  "schema_version": "binary-qwen06b-t4-gate-v1",
+  "purpose": "End-to-end binary protocol and GPU feasibility gate; not paper-result scale.",
+  "task_isolation": {
+    "run_root": "experiments/runs/binary_qwen06b_t4_v1",
+    "report_root": "experiments/reports/binary_qwen06b_t4_v1",
+    "must_not_share_checkpoints_with": [
+      "multiclass",
+      "dpo"
+    ]
+  },
+  "model": {
+    "path": "/home/ubuntu/models/qwen3-0.6b",
+    "torch_dtype": "float16",
+    "lora_r": 8,
+    "lora_alpha": 16,
+    "lora_dropout": 0.05,
+    "lora_target_modules": "attention_mlp",
+    "lora_layer_scope": "all"
+  },
+  "runtime": {
+    "seed": 20260714,
+    "max_length": 512,
+    "train_batch_size": 4,
+    "eval_batch_size": 16,
+    "gradient_accumulation_steps": 4,
+    "epochs": 3,
+    "learning_rate": 0.0002,
+    "weight_decay": 0.01,
+    "warmup_ratio": 0.1,
+    "num_workers": 2,
+    "tf32": true
+  },
+  "selection": {
+    "methods": [
+      "random",
+      "entropy",
+      "margin"
+    ],
+    "active_label_budget": 128
+  },
+  "datasets": {
+    "imdb": {
+      "source_root": "experiments/inputs/binary/imdb",
+      "train_row_limit": 2048,
+      "seed_label_count": 128,
+      "active_pool_size": 512,
+      "development_size": 512,
+      "official_test_row_limit": 1000
+    }
+  },
+  "evaluation_policy": {
+    "checkpoint_metric": "development_f1",
+    "selection_uses": "seed_checkpoint_scores_only",
+    "official_test": "evaluated_once per completed training run and never used for selection or checkpoint choice"
+  }
+}

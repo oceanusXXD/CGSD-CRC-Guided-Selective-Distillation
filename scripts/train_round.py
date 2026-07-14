@@ -48,12 +48,15 @@ def build_train_dataloader(examples: list[PairExample], tokenizer: Any, *, max_l
 
 def train_round_model(*, train_examples: list[PairExample], eval_examples: list[PairExample], tokenizer: Any, model_path: Path, init_adapter_path: Path | None, output_dir: Path, device: Any, args: Any, round_index: int, run_config: dict[str, Any]) -> QwenGenerativeModel:
     train_loader = build_train_dataloader(train_examples, tokenizer, max_length=args.max_length, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, prefetch_factor=args.prefetch_factor, pin_memory=args.pin_memory and device.type == 'cuda', pad_to_multiple_of=args.pad_to_multiple_of, cache_tokenization=args.cache_tokenization)
+    eval_loader = None
+    if eval_examples:
+        eval_loader = build_train_dataloader(eval_examples, tokenizer, max_length=args.max_length, batch_size=args.eval_batch_size, shuffle=False, num_workers=args.num_workers, prefetch_factor=args.prefetch_factor, pin_memory=args.pin_memory and device.type == 'cuda', pad_to_multiple_of=args.pad_to_multiple_of, cache_tokenization=args.cache_tokenization)
     model = QwenGenerativeModel(model_path=str(model_path), mode='lora_attention_mlp', lora_r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout, lora_target_modules=args.lora_target_modules, lora_layer_scope=args.lora_layer_scope, adapter_path=init_adapter_path, adapters_trainable=True, torch_dtype=parse_torch_dtype(args.torch_dtype), trust_remote_code=args.trust_remote_code)
     class_weights = compute_balanced_class_weights(train_examples) if args.balance_train_classes else {}
     class_token_weights = build_class_token_weights(tokenizer, class_weights) if class_weights else {}
     round_config = dict(run_config)
     round_config.update({'round_index': int(round_index), 'train_size': len(train_examples), 'eval_size': 0, 'guide_size_held_out': len(eval_examples), 'guide_used_for_training_or_model_selection': False, 'train_label_counts': count_labels(train_examples), 'class_weights': class_weights, 'class_token_weights': class_token_weights})
-    fit(model=model, train_loader=train_loader, eval_loader=None, tokenizer=tokenizer, output_dir=output_dir, device=device, epochs=args.epochs, lr=args.lr, weight_decay=args.weight_decay, gradient_accumulation_steps=args.gradient_accumulation_steps, max_grad_norm=args.max_grad_norm, warmup_ratio=args.warmup_ratio, threshold=args.threshold, run_config=round_config, early_stopping_patience=args.early_stopping_patience, early_stopping_min_delta=args.early_stopping_min_delta, class_token_weights=class_token_weights if args.balance_train_classes else None, scheduler_type='cosine')
+    fit(model=model, train_loader=train_loader, eval_loader=eval_loader, tokenizer=tokenizer, output_dir=output_dir, device=device, epochs=args.epochs, lr=args.lr, weight_decay=args.weight_decay, gradient_accumulation_steps=args.gradient_accumulation_steps, max_grad_norm=args.max_grad_norm, warmup_ratio=args.warmup_ratio, threshold=args.threshold, run_config=round_config, early_stopping_patience=args.early_stopping_patience, early_stopping_min_delta=args.early_stopping_min_delta, class_token_weights=class_token_weights if args.balance_train_classes else None, scheduler_type='cosine')
     model.to('cpu')
     if device.type == 'cuda':
         import torch
@@ -72,6 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--document_field', default='document')
     parser.add_argument('--label_field', default='groundtruth')
     parser.add_argument('--split_ids_path', default=None)
+    parser.add_argument('--eval_rows_path', default=None, help='Canonical labeled JSONL used only for checkpoint selection.')
     parser.add_argument('--train_rows_path', default=None)
     parser.add_argument('--checkpoint_dir', default=None)
     parser.add_argument('--init_adapter_path', default=None)
@@ -117,10 +121,16 @@ def main() -> None:
     ensure_tokenizer_padding(tokenizer)
     disable_tokenizer_thinking(tokenizer)
     train_examples = examples_from_rows(selected_rows)
-    all_examples = load_stage_examples(data_path=args.data_path, query_field=args.query_field, document_field=args.document_field, label_field=args.label_field)
-    split_payload = read_json(input_artifact_path(args.split_ids_path, split_ids_path(output_dir)))
-    guide_ids = {str(sample_id) for sample_id in split_payload['guide_ids']}
-    guide_examples = filter_examples_by_ids(all_examples, guide_ids)
+    if args.eval_rows_path:
+        eval_rows_path = input_artifact_path(args.eval_rows_path, PROJECT_ROOT)
+        guide_examples = examples_from_rows(read_jsonl(eval_rows_path))
+        evaluation_source = str(eval_rows_path)
+    else:
+        all_examples = load_stage_examples(data_path=args.data_path, query_field=args.query_field, document_field=args.document_field, label_field=args.label_field)
+        split_payload = read_json(input_artifact_path(args.split_ids_path, split_ids_path(output_dir)))
+        guide_ids = {str(sample_id) for sample_id in split_payload['guide_ids']}
+        guide_examples = filter_examples_by_ids(all_examples, guide_ids)
+        evaluation_source = str(input_artifact_path(args.split_ids_path, split_ids_path(output_dir)))
     device = get_device(args.device)
     run_config = vars(args)
     run_config['seed'] = int(runtime_args.seed)
@@ -132,7 +142,7 @@ def main() -> None:
         key = str(row.get('selection_round', 'unknown'))
         selection_round_counts[key] = selection_round_counts.get(key, 0) + 1
     write_json(label_snapshot, train_label_snapshot_path)
-    write_json({'round_index': int(args.round_index), 'model_round_index': int(args.round_index), 'checkpoint_dir': str(checkpoint_dir), 'training_rows_path': str(training_rows_used_path), 'train_size': len(selected_rows), 'train_label_snapshot_size': len(label_snapshot), 'selection_round_counts': selection_round_counts, 'source_selection_rounds': sorted(selection_round_counts), 'training_mode': 'lora_sft_from_base_model', 'init_adapter_path': str(init_adapter_path) if init_adapter_path is not None else None}, training_summary_path)
+    write_json({'round_index': int(args.round_index), 'model_round_index': int(args.round_index), 'checkpoint_dir': str(checkpoint_dir), 'training_rows_path': str(training_rows_used_path), 'train_size': len(selected_rows), 'eval_size': len(guide_examples), 'evaluation_source': evaluation_source, 'train_label_snapshot_size': len(label_snapshot), 'selection_round_counts': selection_round_counts, 'source_selection_rounds': sorted(selection_round_counts), 'training_mode': 'lora_sft_from_base_model', 'init_adapter_path': str(init_adapter_path) if init_adapter_path is not None else None}, training_summary_path)
     teacher_usage = summarize_teacher_label_usage(selected_rows, purpose='training_label_reuse')
     train_steps = int(math.ceil(len(selected_rows) / max(int(runtime_args.batch_size), 1)) * int(runtime_args.epochs))
     write_stage_usage(usage_path, {'stage_name': 'train_round', 'round_index': int(args.round_index), 'cache': cache_decision.to_dict(), 'student_model_calls': 0, 'student_model_train_steps_estimated': train_steps, 'student_model_train_examples': int(len(selected_rows) * int(runtime_args.epochs)), 'estimated_student_train_tokens': int(estimate_query_document_prompt_tokens(selected_rows) * int(runtime_args.epochs)), 'teacher_label_usage': teacher_usage, 'groundtruth_substitute_calls': teacher_usage['groundtruth_substitute_calls'], 'teacher_api_file_calls': teacher_usage['teacher_api_file_calls'], 'checkpoint_dir': str(checkpoint_dir)})

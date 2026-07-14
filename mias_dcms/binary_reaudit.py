@@ -238,6 +238,8 @@ def _normalize_source_rows(
         normalized.append(
             {
                 "id": sample_id,
+                "query": query,
+                "document": document,
                 "text": f"Query: {query}\n\nDocument: {document}",
                 "label": label,
                 "dataset": str(dataset),
@@ -322,18 +324,25 @@ def _proportional_allocation(total: int, capacities: Mapping[int, int]) -> dict[
 def _selector_row(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
+        "query": str(row["query"]),
+        "document": str(row["document"]),
         "text": str(row["text"]),
         "dataset": str(row["dataset"]),
     }
 
 
 def _training_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    training_row = {
         "id": str(row["id"]),
         "text": str(row["text"]),
         "label": int(row["label"]),
         "dataset": str(row["dataset"]),
     }
+    if "query" in row:
+        training_row["query"] = str(row["query"])
+    if "document" in row:
+        training_row["document"] = str(row["document"])
+    return training_row
 
 
 def _validated_training_row(row: Mapping[str, Any]) -> dict[str, Any]:

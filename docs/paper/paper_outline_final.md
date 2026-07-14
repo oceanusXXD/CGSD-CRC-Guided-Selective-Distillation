@@ -1,5 +1,8 @@
-# Superseded Outline
+# Manuscript Outline Entry Point
 
-The previous EMNLP-era PCSS/CRC outline has been archived at `docs/archive/emnlp_legacy/paper_outline_emnlp_pcss.md`.
+The previous EMNLP-era PCSS/CRC outline remains archived at
+`docs/archive/emnlp_legacy/paper_outline_emnlp_pcss.md`.
 
-Use `docs/aaai_long_paper_direction.md` as the canonical research and paper plan. The current main narrative is selector-induced supervision shift across binary classification, multiclass classification, and preference alignment, with Distribution-Guarded Acquisition as the unified correction method.
+Use `docs/paper/aaai_manuscript_blueprint.md` for the active AAAI manuscript
+structure. The manuscript uses MIAS (Model-Induced Acquisition Shift) and DCMS
+(Distribution-Constrained Model-Guided Selection) as its only central terms.
