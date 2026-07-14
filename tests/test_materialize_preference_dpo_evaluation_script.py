@@ -65,6 +65,7 @@ class MaterializePreferenceDPOEvaluationScriptTest(unittest.TestCase):
             self.assertFalse(payload["metadata"]["generation_judge_available"])
             self.assertTrue((output_dir / "heldout_preference_predictions.jsonl").is_file())
             self.assertTrue((output_dir / "judge_rows.jsonl").is_file())
+            self.assertTrue((output_dir / "capability_rows.jsonl").is_file())
             self.assertTrue((output_dir / "aulc_rows.jsonl").is_file())
 
 

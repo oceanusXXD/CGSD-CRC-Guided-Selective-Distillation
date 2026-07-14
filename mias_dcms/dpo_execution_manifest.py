@@ -8,6 +8,10 @@ from typing import Any
 
 DPO_EXECUTION_STAGES = ("selection", "reveal", "training", "evaluation", "summary")
 
+DCMS_AUDIT_GROUP_FIELDS = (
+    "length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster"
+)
+
 REQUIRED_DPO_EXECUTION_ARTIFACTS = (
     "active_pool_path",
     "oracle_store_path",
@@ -385,9 +389,9 @@ def _selection_commands(
             "--method",
             _quote(base_method),
             "--group_fields",
-            "length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster",
+            DCMS_AUDIT_GROUP_FIELDS,
             "--audit_group_fields",
-            "length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster",
+            DCMS_AUDIT_GROUP_FIELDS,
         ]
         if selection_group_field:
             prepare_command.extend(["--selection_group_field", _quote(selection_group_field)])
@@ -409,6 +413,8 @@ def _selection_commands(
             "--rounding_seed",
             str(int(seed)),
             "--use_rank_normalization",
+            "--audit_group_fields",
+            DCMS_AUDIT_GROUP_FIELDS,
         ]
         if selection_group_field:
             dcms_command.extend(["--selection_group_field", _quote(selection_group_field)])
@@ -614,6 +620,8 @@ def _evaluation_commands(*, artifacts: Mapping[str, Any], row: Mapping[str, Any]
                     str(int(training_config.get("seed_label_count", 0))),
                     "--active_budget",
                     str(int(row.get("budget", 0))),
+                    "--group_field",
+                    _quote(str(evaluation_config.get("group_field", "length_gap_bin"))),
                 ]
             )
         )

@@ -7,6 +7,8 @@ This directory contains the planning and acceptance documents for the MIAS/DCMS 
 - `01_最终任务_算法与AAAI论文路径_MIAS_DCMS.md`: final research positioning, algorithm scope, and AAAI paper path.
 - `02_开发与实验执行文档_MIAS_DCMS.md`: execution phases D0-D8 and required artifacts.
 - `03_开发与实验验收清单_MIAS_DCMS.md`: gate-by-gate acceptance checklist.
+- `04_当前迁移开发验收状态_MIAS_DCMS.md`: current code migration and development acceptance status.
+- `05_下一阶段实验规划_MIAS_DCMS.md`: evidence-based ordering, run matrix, stop/go rules, and completion criteria for the next experiments.
 
 ## Current File Tree Contract
 

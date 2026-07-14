@@ -1,0 +1,43 @@
+{
+  "active_pool_count": 20,
+  "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+  "covered_methods": [
+    "ActiveDPO+DCMS",
+    "Random"
+  ],
+  "covered_seeds": [
+    1
+  ],
+  "is_ready": true,
+  "issues": [],
+  "logprob_count": 20,
+  "logprob_summary": {
+    "absolute_implicit_margin_mean": 0.011045455932617188,
+    "finite_row_count": 20,
+    "implicit_margin_not_all_zero": true,
+    "implicit_reward_gap_mean": 0.0027296066284179686,
+    "implicit_reward_gap_sign_counts": {
+      "negative": 8,
+      "positive": 12,
+      "zero": 0
+    },
+    "implicit_reward_gap_variance": 0.00027800527128420073,
+    "logprob_fields": {
+      "policy_response_1": "policy_logprob_response_1",
+      "policy_response_2": "policy_logprob_response_2",
+      "reference_response_1": "reference_logprob_response_1",
+      "reference_response_2": "reference_logprob_response_2"
+    },
+    "policy_gap_mean": 3.8914104461669923,
+    "policy_gap_variance": 1033.939754404699,
+    "reference_gap_mean": 3.888680839538574,
+    "reference_gap_variance": 1033.748248832365,
+    "row_count": 20
+  },
+  "logprobs_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_logprobs.jsonl",
+  "oracle_label_count": 20,
+  "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
+  "planned_run_count": 2,
+  "run_matrix_path": "experiments/runs/dpo_pilot/current/run_matrix.jsonl",
+  "split_manifest_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/split_manifest.json"
+}

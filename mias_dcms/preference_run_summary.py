@@ -79,8 +79,35 @@ def build_preference_run_record(
         training_metrics=merged_training_metrics,
         evaluation_metrics=dict(evaluation_metrics or {}),
         cost_metrics=cost_metrics,
+        continuous_moments=_numeric_mapping(selection_summary.get("continuous_moments")),
+        rounded_moments=_numeric_mapping(selection_summary.get("rounded_moments")),
+        robust_lower_moments=_numeric_mapping(selection_summary.get("robust_lower_moments")),
+        robust_upper_moments=_numeric_mapping(selection_summary.get("robust_upper_moments")),
+        utility_retained=float(selection_summary.get("utility_retained", selection_metrics.get("utility_retained", 0.0))),
+        max_constraint_violation=float(
+            selection_summary.get(
+                "max_constraint_violation", selection_metrics.get("max_constraint_violation", 0.0)
+            )
+        ),
+        solver_status=str(selection_summary.get("solver_status", "")),
+        selected_slack=(
+            float(selection_summary["selected_slack"])
+            if selection_summary.get("selected_slack") is not None
+            else None
+        ),
+        rounding_seed=(
+            int(selection_summary["rounding_seed"])
+            if selection_summary.get("rounding_seed") is not None
+            else None
+        ),
     )
 
 
 def _word_count(value: Any) -> int:
     return len(str(value).split())
+
+
+def _numeric_mapping(value: Any) -> dict[str, float]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): float(item) for key, item in value.items()}

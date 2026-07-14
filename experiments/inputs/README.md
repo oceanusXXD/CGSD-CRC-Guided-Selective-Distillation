@@ -69,4 +69,6 @@ cover every `id` in `data.jsonl` when running `scripts/prepare.py`.
   and a fixed seed/active/heldout/test split manifest.
 - Large FEVER, IMDb, and other binary-task input trees have been removed from
   the active tree. Their compact evidence is retained in
-  `experiments/reports/binary_legacy/` and related report files.
+  `experiments/reports/binary_legacy/` and related report files. The original
+  sample-level source and prediction-log paths are listed, without being
+  reconstructed, in `experiments/reports/binary_legacy/sample_level_source_inventory.json`.

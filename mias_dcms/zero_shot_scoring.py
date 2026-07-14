@@ -186,12 +186,27 @@ class CausalCandidateScorer:
     ) -> tuple[list[list[float]], list[list[float]]]:
         if not candidates:
             raise ValueError("candidates cannot be empty")
+        candidate_token_ids = [
+            self.tokenizer(str(candidate), add_special_tokens=False)["input_ids"]
+            for candidate in candidates
+        ]
+        # Classification codes such as A-D are one-token continuations.  Their
+        # relative likelihoods only require the final prompt state, avoiding
+        # one full causal-LM pass per candidate and a sequence-length vocab
+        # projection.  Keep the generic path for multi-token preference calls.
+        if all(len(token_ids) == 1 for token_ids in candidate_token_ids):
+            fast_scores = self._score_single_token_candidates(
+                messages,
+                candidate_token_ids=[int(token_ids[0]) for token_ids in candidate_token_ids],
+                collect_representations=collect_representations,
+            )
+            if fast_scores is not None:
+                return fast_scores
         encoded: list[tuple[int, list[int], int]] = []
         for message_index, message in enumerate(messages):
             prompt = self._render_messages(message)
             prompt_ids = self.tokenizer(prompt, add_special_tokens=False)["input_ids"]
-            for candidate in candidates:
-                candidate_ids = self.tokenizer(str(candidate), add_special_tokens=False)["input_ids"]
+            for candidate, candidate_ids in zip(candidates, candidate_token_ids, strict=True):
                 if not candidate_ids:
                     raise ValueError(f"candidate tokenized to an empty sequence: {candidate!r}")
                 available_prompt_length = self.max_length - len(candidate_ids)
@@ -227,6 +242,76 @@ class CausalCandidateScorer:
             [softmax_probabilities(scores) for scores in grouped_scores],
             [list(value or []) for value in grouped_representations],
         )
+
+    def _score_single_token_candidates(
+        self,
+        messages: Sequence[Sequence[dict[str, str]]],
+        *,
+        candidate_token_ids: Sequence[int],
+        collect_representations: bool,
+    ) -> tuple[list[list[float]], list[list[float]]] | None:
+        """Score one-token continuations from the final prompt state when supported."""
+        backbone = getattr(self.model, "model", None)
+        output_embeddings = getattr(self.model, "get_output_embeddings", lambda: None)()
+        if backbone is None or not callable(backbone) or output_embeddings is None:
+            return None
+        if not hasattr(output_embeddings, "weight"):
+            return None
+
+        encoded: list[list[int]] = []
+        for message in messages:
+            prompt = self._render_messages(message)
+            prompt_ids = self.tokenizer(prompt, add_special_tokens=False)["input_ids"]
+            if not prompt_ids:
+                return None
+            # Match the generic path, which reserves one token for the candidate.
+            encoded.append(prompt_ids[-(self.max_length - 1) :])
+
+        device = _model_input_device(self.model)
+        candidate_tensor = torch.tensor(candidate_token_ids, dtype=torch.long, device=device)
+        probabilities: list[list[float]] = []
+        representations: list[list[float]] = []
+        for start in range(0, len(encoded), self.batch_size):
+            batch = encoded[start : start + self.batch_size]
+            maximum_length = max(len(input_ids) for input_ids in batch)
+            pad_token_id = int(self.tokenizer.pad_token_id)
+            padded_ids = [
+                input_ids + [pad_token_id] * (maximum_length - len(input_ids))
+                for input_ids in batch
+            ]
+            attention_masks = [
+                [1] * len(input_ids) + [0] * (maximum_length - len(input_ids))
+                for input_ids in batch
+            ]
+            input_tensor = torch.tensor(padded_ids, dtype=torch.long, device=device)
+            attention_tensor = torch.tensor(attention_masks, dtype=torch.long, device=device)
+            final_positions = torch.tensor(
+                [len(input_ids) - 1 for input_ids in batch], dtype=torch.long, device=device
+            )
+            with torch.inference_mode():
+                output = backbone(
+                    input_ids=input_tensor,
+                    attention_mask=attention_tensor,
+                    return_dict=True,
+                )
+            hidden_states = getattr(output, "last_hidden_state", None)
+            if hidden_states is None:
+                return None
+            final_hidden = hidden_states[
+                torch.arange(len(batch), device=device),
+                final_positions,
+            ]
+            # Calling the native output layer preserves its exact numerical
+            # behavior (notably bfloat16 accumulation) while projecting only
+            # one state per prompt rather than every sequence position.
+            scores = output_embeddings(final_hidden).index_select(1, candidate_tensor)
+            probabilities.extend(softmax_probabilities(values) for values in scores.float().cpu().tolist())
+            if collect_representations:
+                representations.extend(final_hidden.float().cpu().tolist())
+
+        if not collect_representations:
+            representations = [[] for _ in messages]
+        return probabilities, representations
 
     def _render_messages(self, messages: Sequence[dict[str, str]]) -> str:
         try:

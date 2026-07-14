@@ -34,10 +34,13 @@ class PreferenceRunEvaluationTest(unittest.TestCase):
         self.assertEqual(1.0, artifacts.metrics["preference_accuracy"])
         self.assertEqual(1.0, artifacts.metrics["length_controlled_win_rate"])
         self.assertEqual(2, artifacts.metrics["preference_eval_count"])
+        self.assertEqual(-2.5, artifacts.metrics["capability_regression"])
+        self.assertEqual(2, artifacts.metrics["capability_eval_count"])
         self.assertEqual(0.0, artifacts.initial_metrics["preference_accuracy"])
         self.assertEqual(2, len(artifacts.aulc_rows))
         self.assertFalse(artifacts.metadata["generation_judge_available"])
-        self.assertFalse(artifacts.metadata["capability_evaluation_available"])
+        self.assertTrue(artifacts.metadata["capability_evaluation_available"])
+        self.assertEqual(2, len(artifacts.capability_rows))
         self.assertEqual(FIXED_HUMAN_PAIRWISE_EVALUATION_SOURCE, artifacts.judge_rows[0]["judge_source"])
 
     def test_rejects_incomplete_logprob_coverage(self) -> None:

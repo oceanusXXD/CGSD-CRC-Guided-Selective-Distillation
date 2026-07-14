@@ -164,7 +164,9 @@ class DPOExecutionManifestTest(unittest.TestCase):
                 "heldout_logprobs_path_template": "{run_dir}/heldout_logprobs.jsonl",
                 "preference_predictions_path_template": "{run_dir}/heldout_preference_predictions.jsonl",
                 "judge_rows_path_template": "{run_dir}/judge_rows.jsonl",
+                "capability_rows_path_template": "{run_dir}/capability_rows.jsonl",
                 "aulc_rows_path_template": "{run_dir}/aulc_rows.jsonl",
+                "group_field": "ab_position",
             },
         )
 
@@ -174,7 +176,9 @@ class DPOExecutionManifestTest(unittest.TestCase):
         self.assertEqual(3, len(stage["commands"]))
         self.assertIn("scripts/generate_preference_logprobs.py", stage["commands"][0])
         self.assertIn("scripts/materialize_preference_dpo_evaluation.py", stage["commands"][1])
+        self.assertIn("--group_field ab_position", stage["commands"][1])
         self.assertIn("scripts/audit_preference_evaluation.py", stage["commands"][2])
+        self.assertIn("--capability_rows_path", stage["commands"][2])
         self.assertIn("heldout_pool_path", stage["inputs"])
         self.assertIn("heldout_logprobs_path", stage["outputs"])
 

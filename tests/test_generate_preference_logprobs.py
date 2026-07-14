@@ -4,11 +4,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.generate_preference_logprobs import _load_completed_rows, _ordered_logprob_rows
+from scripts.generate_preference_logprobs import (
+    _load_completed_rows,
+    _ordered_logprob_rows,
+    _resolve_model_source,
+)
 from mias_dcms.utils import write_jsonl
 
 
 class GeneratePreferenceLogprobsTest(unittest.TestCase):
+    def test_local_only_preserves_huggingface_model_id(self) -> None:
+        self.assertEqual(
+            "Qwen/Qwen3-0.6B",
+            _resolve_model_source("Qwen/Qwen3-0.6B", local_files_only=True),
+        )
+
     def test_resume_uses_partial_checkpoint_and_preserves_input_order(self) -> None:
         source = [{"sample_id": "a"}, {"sample_id": "b"}, {"sample_id": "c"}]
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,0 +1,98 @@
+{
+  "command_count": 1,
+  "dry_run": false,
+  "failed_command_count": 0,
+  "limit": 0,
+  "manifest_path": "experiments/runs/dpo_pilot/current/execution_manifest.json",
+  "method": "Random",
+  "records": [
+    {
+      "command": "python scripts/build_dpo_run_record.py --selection_summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selection_summary.json --reveal_summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/summary.json --training_rows_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl --training_summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json --evaluation_metrics_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json --cost_report_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json --output_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/run_record.json --dataset helpsteer2_preference --model qwen3-0.6b --method Random --budget 4 --seed 1 --config_hash 7ff53f8f15a5129338167ff430776291f80773f48176293b82316d38afc6f8a9",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "Random",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget4__seed1__random",
+      "seed": 1,
+      "stage": "summary",
+      "status": "complete",
+      "stderr_char_count": 0,
+      "stderr_preview": "",
+      "stderr_truncated": false,
+      "stdout_char_count": 1669,
+      "stdout_json_summary": {
+        "budget": 4,
+        "config_hash": "7ff53f8f15a5129338167ff430776291f80773f48176293b82316d38afc6f8a9",
+        "continuous_moments": {},
+        "cost_metrics": {
+          "active_label_count": 4,
+          "evaluation_label_count": 0,
+          "judge_calls": 0,
+          "oracle_label_calls": 4,
+          "seed_label_count": 4,
+          "selector_compute_seconds": 0.0,
+          "train_tokens": 996
+        },
+        "dataset": "helpsteer2_preference",
+        "evaluation_metrics": {
+          "aulc": 0.5,
+          "aulc_point_count": 2,
+          "capability_eval_count": 4,
+          "capability_regression": -0.005290031433105469,
+          "judge_eval_count": 4,
+          "length_controlled_win_rate": 0.3333333333333333,
+          "preference_accuracy": 0.5,
+          "preference_eval_count": 4,
+          "raw_judge_win_rate": 0.5,
+          "worst_group_preference_accuracy": 0.0
+        },
+        "max_constraint_violation": 0.0,
+        "method": "Random",
+        "model": "qwen3-0.6b",
+        "robust_lower_moments": {},
+        "robust_upper_moments": {},
+        "rounded_moments": {},
+        "rounding_seed": null,
+        "run_status": "completed",
+        "seed": 1,
+        "selected_count": 4,
+        "selected_slack": null,
+        "selection_metrics": {
+          "acquisition_tv": 0.6,
+          "audited_group_fields": [
+            "length_gap_bin",
+            "source_pair",
+            "prompt_cluster",
+            "ab_position",
+            "length_by_prompt_cluster"
+          ],
+          "max_constraint_violation": 0.0,
+          "maximum_propensity_ratio": 3.0,
+          "pool_size": 20,
+          "total_absolute_prediction_error": 5.551115123125783e-17,
+          "utility_retained": 1.0,
+          "utility_retained_not_applicable": true
+        },
+        "solver_status": "",
+        "training_metrics": {
+          "dpo_train_row_count": 4,
+          "mean_policy_preference_accuracy": 0.0,
+          "mean_train_loss": 0.6937042474746704,
+          "planned_update_steps": 1,
+          "processed_input_tokens": 273,
+          "processed_pair_count": 1,
+          "revealed_count": 4,
+          "training_token_budget": 2048,
+          "unrevealed_count": 16,
+          "update_steps": 1
+        },
+        "utility_retained": 1.0
+      },
+      "stdout_preview": "{\"budget\": 4, \"config_hash\": \"7ff53f8f15a5129338167ff430776291f80773f48176293b82316d38afc6f8a9\", \"continuous_moments\": {}, \"cost_metrics\": {\"active_label_count\": 4, \"evaluation_label_count\": 0, \"judge_calls\": 0, \"oracle_label_calls\": 4, \"seed_label_count\": 4, \"selector_compute_seconds\": 0.0, \"train_tokens\": 996}, \"dataset\": \"helpsteer2_preference\", \"evaluation_metrics\": {\"aulc\": 0.5, \"aulc_point_count\": 2, \"capability_eval_count\": 4, \"capability_regression\": -0.005290031433105469, \"judge_eval_count\": 4, \"length_controlled_win_rate\": 0.3333333333333333, \"preference_accuracy\": 0.5, \"preference_eval_count\": 4, \"raw_judge_win_rate\": 0.5, \"worst_group_preference_accuracy\": 0.0}, \"max_constraint_violation\": 0.0, \"method\": \"Random\", \"model\": \"qwen3-0.6b\", \"robust_lower_moments\": {}, \"robust_upper_moments\": {}, \"rounded_moments\": {}, \"rounding_seed\": null, \"run_status\": \"completed\", \"seed\": 1, \"selected_count\": 4, \"selected_slack\": null, \"selection_metrics\": {\"acquisition_tv\": 0.6, \"audited_group_fields\": [\"length_gap_bin\", \"source_pair\", \"prompt_cluster\", \"ab_position\", \"length_by_prompt_cluster\"], \"max_constraint_violation\": 0.0, \"maximum_propensity_ratio\": 3.0, \"pool_size\": 20, \"total_absolute_prediction_error\": 5.551115123125783e-17, \"utility_retained\": 1.0, \"utility_retained_not_applicable\": true}, \"solver_status\": \"\", \"training_metrics\": {\"dpo_train_row_count\": 4, \"mean_policy_preference_accuracy\": 0.0, \"mean_train_loss\": 0.6937042474746704, \"planned_update_steps\": 1, \"processed_input_tokens\": 273, \"processed_pair_count\": 1, \"revealed_count\": 4, \"training_token_budget\": 2048, \"unrevealed_count\": 16, \"update_steps\": 1}, \"utility_retained\": 1.0}",
+      "stdout_truncated": false
+    }
+  ],
+  "run_id": null,
+  "seed": 1,
+  "stage": "summary"
+}

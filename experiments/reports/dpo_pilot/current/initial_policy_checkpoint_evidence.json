@@ -1,0 +1,3 @@
+{
+  "dpo.cpu_pilot.initial_policy_checkpoint": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_checkpoint.json"
+}

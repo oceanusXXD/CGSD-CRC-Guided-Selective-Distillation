@@ -1,0 +1,131 @@
+{
+  "inventory_version": "binary-legacy-source-paths-v1",
+  "scope": "Original binary sample-level data and prediction-log path inventory only. No binary experiment was rerun.",
+  "status": "not_recovered",
+  "records": [
+    {
+      "dataset": "IMDb",
+      "setting": "query_id_1",
+      "artifact": "original sample rows",
+      "source_path": "experiments/inputs/imdb/query_id_1/data.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/imdb_qwen06b_q1_q2_test.md"
+    },
+    {
+      "dataset": "IMDb",
+      "setting": "query_id_2",
+      "artifact": "original sample rows",
+      "source_path": "experiments/inputs/imdb/query_id_2/data.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/imdb_qwen06b_q1_q2_test.md"
+    },
+    {
+      "dataset": "IMDb",
+      "setting": "source records",
+      "artifact": "upstream labels",
+      "source_path": "Cascade/datasets/public/imdb/ground_truth.json",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/imdb_qwen06b_q1_q2_test.md"
+    },
+    {
+      "dataset": "IMDb",
+      "setting": "source records",
+      "artifact": "upstream documents",
+      "source_path": "Cascade/datasets/public/imdb/documents.json",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/imdb_qwen06b_q1_q2_test.md"
+    },
+    {
+      "dataset": "IMDb",
+      "setting": "query_id_1 round_0",
+      "artifact": "student prediction log",
+      "source_path": "experiments/inputs/imdb/query_id_1/round_0/all_student_predictions.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/imdb_qwen06b_q1_q2_test.md"
+    },
+    {
+      "dataset": "IMDb",
+      "setting": "query_id_2 round_0",
+      "artifact": "student prediction log",
+      "source_path": "experiments/inputs/imdb/query_id_2/round_0/all_student_predictions.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/imdb_qwen06b_q1_q2_test.md"
+    },
+    {
+      "dataset": "FEVER",
+      "setting": "round_0",
+      "artifact": "original sample rows",
+      "source_path": "experiments/inputs/fever/data.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/fever_qwen06b_budget_sweep_test.md"
+    },
+    {
+      "dataset": "FEVER",
+      "setting": "round_0",
+      "artifact": "all student prediction log",
+      "source_path": "experiments/inputs/fever/round_0/all_student_predictions.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/fever_qwen06b_budget_sweep_test.md"
+    },
+    {
+      "dataset": "FEVER",
+      "setting": "round_0",
+      "artifact": "calibration student prediction log",
+      "source_path": "experiments/inputs/fever/round_0/calibration_student_predictions.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/fever_qwen06b_budget_sweep_test.md"
+    },
+    {
+      "dataset": "FEVER",
+      "setting": "round_0",
+      "artifact": "pool student prediction log",
+      "source_path": "experiments/inputs/fever/round_0/pool_student_predictions.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/fever_qwen06b_budget_sweep_test.md"
+    },
+    {
+      "dataset": "FEVER",
+      "setting": "round_0",
+      "artifact": "final calibration student prediction log",
+      "source_path": "experiments/inputs/fever/round_0/final_calibration_student_predictions.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/fever_qwen06b_budget_sweep_test.md"
+    },
+    {
+      "dataset": "Codebase",
+      "setting": "query_id_1",
+      "artifact": "original sample rows",
+      "source_path": "experiments/inputs/codebase/query_id_1/data.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/codebase_twitterhate_test.md"
+    },
+    {
+      "dataset": "Codebase",
+      "setting": "query_id_2",
+      "artifact": "original sample rows",
+      "source_path": "experiments/inputs/codebase/query_id_2/data.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/codebase_twitterhate_test.md"
+    },
+    {
+      "dataset": "Codebase",
+      "setting": "query_id_3",
+      "artifact": "original sample rows",
+      "source_path": "experiments/inputs/codebase/query_id_3/data.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/codebase_twitterhate_test.md"
+    },
+    {
+      "dataset": "TwitterHate",
+      "setting": "query_id_1",
+      "artifact": "original sample rows",
+      "source_path": "experiments/inputs/twitter_hate/data.jsonl",
+      "exists_in_workspace": false,
+      "evidence_path": "experiments/codebase_twitterhate_test.md"
+    }
+  ],
+  "not_sample_level_evidence": [
+    "experiments/reports/binary_legacy/csv/*.csv",
+    "experiments/reports/binary_legacy/result.md"
+  ]
+}

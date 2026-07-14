@@ -1,0 +1,445 @@
+{
+  "blocked_run_count": 0,
+  "completed_run_count": 2,
+  "failed_run_count": 0,
+  "in_progress_run_count": 0,
+  "is_complete": true,
+  "issues": [],
+  "manifest_path": "experiments/runs/dpo_pilot/current/execution_manifest.json",
+  "output_path": "experiments/reports/dpo_pilot/current/execution_status.json",
+  "run_count": 2,
+  "runs": [
+    {
+      "artifacts": {
+        "active_pool_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/active_pool.jsonl",
+        "cost_report_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json",
+        "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl",
+        "evaluation_metrics_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json",
+        "logprobs_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/logprobs.jsonl",
+        "oracle_store_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/oracle_store.jsonl",
+        "policy_adapter_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/policy_adapter",
+        "revealed_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/revealed_rows.jsonl",
+        "run_record_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/run_record.json",
+        "selected_ids_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selected_ids.json",
+        "selection_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selection_summary.json",
+        "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json"
+      },
+      "budget": 4,
+      "config_hash": "7ff53f8f15a5129338167ff430776291f80773f48176293b82316d38afc6f8a9",
+      "data_config": {
+        "active_dpo_length_normalize": true,
+        "active_dpo_novelty_weight": 0.25,
+        "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+        "logprobs_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_logprobs.jsonl",
+        "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
+        "prompt_clusters_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl",
+        "split_manifest_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/split_manifest.json"
+      },
+      "dataset": "helpsteer2_preference",
+      "execution_status": "complete",
+      "failure_reason": "pending",
+      "judge_config_hash": "499952c46ee14cfe3b530c7c2e46498dbd7d456fcc3875bc62b61da6baaed61b",
+      "method": "Random",
+      "model": "qwen3-0.6b",
+      "next_stage": null,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget4__seed1__random",
+      "run_status": "planned",
+      "seed": 1,
+      "source_config_sha256": "a74921dbda9927e3534dca13dc518a59070f2cd8e8e19ee3e12723f47276e858",
+      "stages": [
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/select_preference_random.py --input_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl --output_dir experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random --budget 4 --seed 1 --metadata_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl"
+          ],
+          "depends_on": [],
+          "inputs": {
+            "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "prompt_clusters_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "selected_ids_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selected_ids.json",
+            "selection_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selection_summary.json"
+          },
+          "present_inputs": [
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selected_ids.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selection_summary.json"
+          ],
+          "stage": "selection",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/reveal_preference_labels.py --active_pool_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl --oracle_store_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json --selected_ids_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selected_ids.json --output_dir experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random --round_index 0 --method random"
+          ],
+          "depends_on": [
+            "selection"
+          ],
+          "inputs": {
+            "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
+            "selected_ids_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selected_ids.json"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl",
+            "revealed_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/revealed_rows.jsonl"
+          },
+          "present_inputs": [
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selected_ids.json"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/revealed_rows.jsonl"
+          ],
+          "stage": "reveal",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/train_preference_dpo_run.py --dpo_train_rows_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl --output_dir experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/policy_adapter --training_summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json --cost_report_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json --model_name_or_path Qwen/Qwen3-0.6B --training_config_json '{\"batch_size\":1,\"beta\":0.1,\"data_accumulation\":\"cumulative\",\"dtype\":\"float32\",\"epochs\":1,\"generation_parameters\":{\"max_new_tokens\":64,\"temperature\":0.0},\"gradient_accumulation_steps\":1,\"gradient_checkpointing\":false,\"initial_policy_adapter_path\":\"experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_adapter\",\"initialization\":\"helpsteer2_cpu_seed_dpo_adapter_v1\",\"learning_rate\":1e-05,\"lora_alpha\":16,\"lora_dropout\":0.05,\"lora_r\":8,\"max_grad_norm\":1.0,\"max_length\":256,\"mixed_precision\":\"no\",\"model_name_or_path\":\"Qwen/Qwen3-0.6B\",\"num_workers\":0,\"optimizer\":\"adamw\",\"prompt_format\":\"chatml_pairwise_v1\",\"seed_label_count\":4,\"target_modules\":[\"q_proj\",\"k_proj\",\"v_proj\",\"o_proj\"],\"train_token_budget\":2048,\"update_steps\":1,\"warmup_ratio\":0.0,\"weight_decay\":0.0}' --seed 1 --method random --budget 4 --seed_label_count 4"
+          ],
+          "depends_on": [
+            "reveal"
+          ],
+          "inputs": {
+            "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "cost_report_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json",
+            "policy_adapter_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/policy_adapter",
+            "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json"
+          },
+          "present_inputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/policy_adapter",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json"
+          ],
+          "stage": "training",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/generate_preference_logprobs.py --input_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl --output_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_logprobs.jsonl --summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_logprobs.summary.json --policy_model_path Qwen/Qwen3-0.6B --reference_model_path Qwen/Qwen3-0.6B --policy_adapter_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/policy_adapter --reference_adapter_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_adapter --batch_size 1 --row_batch_size 1 --max_length 256 --torch_dtype float32 --resume --device cpu",
+            "python scripts/materialize_preference_dpo_evaluation.py --heldout_pool_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl --heldout_oracle_store_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json --heldout_logprobs_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_logprobs.jsonl --output_dir experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random --seed_budget 4 --active_budget 4 --group_field ab_position",
+            "python scripts/audit_preference_evaluation.py --output_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json --preference_predictions_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_preference_predictions.jsonl --judge_rows_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/judge_rows.jsonl --capability_rows_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/capability_rows.jsonl --aulc_rows_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/aulc_rows.jsonl"
+          ],
+          "depends_on": [
+            "training"
+          ],
+          "inputs": {
+            "aulc_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/aulc_rows.jsonl",
+            "capability_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/capability_rows.jsonl",
+            "heldout_oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json",
+            "heldout_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl",
+            "judge_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/judge_rows.jsonl",
+            "preference_predictions_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_preference_predictions.jsonl",
+            "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "aulc_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/aulc_rows.jsonl",
+            "capability_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/capability_rows.jsonl",
+            "evaluation_metrics_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json",
+            "heldout_logprobs_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_logprobs.jsonl",
+            "judge_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/judge_rows.jsonl",
+            "preference_predictions_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_preference_predictions.jsonl"
+          },
+          "present_inputs": [
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json",
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/aulc_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/capability_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_preference_predictions.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/judge_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/aulc_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/capability_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_logprobs.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/heldout_preference_predictions.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/judge_rows.jsonl"
+          ],
+          "stage": "evaluation",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/build_dpo_run_record.py --selection_summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selection_summary.json --reveal_summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/summary.json --training_rows_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl --training_summary_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json --evaluation_metrics_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json --cost_report_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json --output_path experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/run_record.json --dataset helpsteer2_preference --model qwen3-0.6b --method Random --budget 4 --seed 1 --config_hash 7ff53f8f15a5129338167ff430776291f80773f48176293b82316d38afc6f8a9"
+          ],
+          "depends_on": [
+            "evaluation"
+          ],
+          "inputs": {
+            "cost_report_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json",
+            "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl",
+            "evaluation_metrics_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json",
+            "reveal_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/summary.json",
+            "revealed_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/revealed_rows.jsonl",
+            "selection_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selection_summary.json",
+            "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "run_record_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/run_record.json"
+          },
+          "present_inputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/cost_report.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/dpo_train_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/evaluation_metrics.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/revealed_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/selection_summary.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/summary.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/training_summary.json"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random/run_record.json"
+          ],
+          "stage": "summary",
+          "status": "complete"
+        }
+      ],
+      "training_config_hash": "b5fb9ad719b7124b05536fffb2004294589db6c080a9a320485d9fc2f7ad101e"
+    },
+    {
+      "artifacts": {
+        "active_pool_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/active_pool.jsonl",
+        "cost_report_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/cost_report.json",
+        "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl",
+        "evaluation_metrics_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json",
+        "logprobs_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/logprobs.jsonl",
+        "oracle_store_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/oracle_store.jsonl",
+        "policy_adapter_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter",
+        "revealed_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/revealed_rows.jsonl",
+        "run_record_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/run_record.json",
+        "selected_ids_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selected_ids.json",
+        "selection_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selection_summary.json",
+        "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json"
+      },
+      "budget": 4,
+      "config_hash": "cd4c4fc5c7c12d99a52985b293f8dfb836b0ff3c246452fb122dc41fb02947d8",
+      "data_config": {
+        "active_dpo_length_normalize": true,
+        "active_dpo_novelty_weight": 0.25,
+        "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+        "logprobs_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_logprobs.jsonl",
+        "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
+        "prompt_clusters_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl",
+        "split_manifest_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/split_manifest.json"
+      },
+      "dataset": "helpsteer2_preference",
+      "execution_status": "complete",
+      "failure_reason": "pending",
+      "judge_config_hash": "499952c46ee14cfe3b530c7c2e46498dbd7d456fcc3875bc62b61da6baaed61b",
+      "method": "ActiveDPO+DCMS",
+      "model": "qwen3-0.6b",
+      "next_stage": null,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget4__seed1__activedpo_dcms",
+      "run_status": "planned",
+      "seed": 1,
+      "source_config_sha256": "a74921dbda9927e3534dca13dc518a59070f2cd8e8e19ee3e12723f47276e858",
+      "stages": [
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/score_preference_baselines.py --input_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_logprobs.jsonl --output_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/baseline_scores.jsonl' --methods active_dpo --metadata_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl --metadata_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl --active_dpo_length_normalize --active_dpo_novelty_weight 0.25",
+            "python scripts/prepare_preference_dcms_inputs.py --input_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/baseline_scores.jsonl' --output_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dcms_candidates.jsonl' --method active_dpo --group_fields length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster --audit_group_fields length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster",
+            "python scripts/select_dcms.py --input_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dcms_candidates.jsonl' --output_dir 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS' --budget 4 --target_moments pool --slack_grid 0,0.01,0.02,0.05,0.1,0.2,0.5 --kappa 0.05 --rounding_seed 1 --use_rank_normalization --audit_group_fields length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster"
+          ],
+          "depends_on": [],
+          "inputs": {
+            "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "logprobs_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_logprobs.jsonl",
+            "prompt_clusters_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "selected_ids_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selected_ids.json",
+            "selection_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selection_summary.json"
+          },
+          "present_inputs": [
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_logprobs.jsonl",
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selected_ids.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selection_summary.json"
+          ],
+          "stage": "selection",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/reveal_preference_labels.py --active_pool_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl --oracle_store_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json --selected_ids_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selected_ids.json' --output_dir 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS' --round_index 0 --method active_dpo_dcms"
+          ],
+          "depends_on": [
+            "selection"
+          ],
+          "inputs": {
+            "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
+            "selected_ids_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selected_ids.json"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl",
+            "revealed_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/revealed_rows.jsonl"
+          },
+          "present_inputs": [
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selected_ids.json"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/revealed_rows.jsonl"
+          ],
+          "stage": "reveal",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/train_preference_dpo_run.py --dpo_train_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl' --output_dir 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter' --training_summary_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json' --cost_report_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/cost_report.json' --model_name_or_path Qwen/Qwen3-0.6B --training_config_json '{\"batch_size\":1,\"beta\":0.1,\"data_accumulation\":\"cumulative\",\"dtype\":\"float32\",\"epochs\":1,\"generation_parameters\":{\"max_new_tokens\":64,\"temperature\":0.0},\"gradient_accumulation_steps\":1,\"gradient_checkpointing\":false,\"initial_policy_adapter_path\":\"experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_adapter\",\"initialization\":\"helpsteer2_cpu_seed_dpo_adapter_v1\",\"learning_rate\":1e-05,\"lora_alpha\":16,\"lora_dropout\":0.05,\"lora_r\":8,\"max_grad_norm\":1.0,\"max_length\":256,\"mixed_precision\":\"no\",\"model_name_or_path\":\"Qwen/Qwen3-0.6B\",\"num_workers\":0,\"optimizer\":\"adamw\",\"prompt_format\":\"chatml_pairwise_v1\",\"seed_label_count\":4,\"target_modules\":[\"q_proj\",\"k_proj\",\"v_proj\",\"o_proj\"],\"train_token_budget\":2048,\"update_steps\":1,\"warmup_ratio\":0.0,\"weight_decay\":0.0}' --seed 1 --method active_dpo_dcms --budget 4 --seed_label_count 4"
+          ],
+          "depends_on": [
+            "reveal"
+          ],
+          "inputs": {
+            "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "cost_report_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/cost_report.json",
+            "policy_adapter_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter",
+            "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json"
+          },
+          "present_inputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/cost_report.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json"
+          ],
+          "stage": "training",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/generate_preference_logprobs.py --input_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl --output_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl' --summary_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.summary.json' --policy_model_path Qwen/Qwen3-0.6B --reference_model_path Qwen/Qwen3-0.6B --policy_adapter_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter' --reference_adapter_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_adapter --batch_size 1 --row_batch_size 1 --max_length 256 --torch_dtype float32 --resume --device cpu",
+            "python scripts/materialize_preference_dpo_evaluation.py --heldout_pool_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl --heldout_oracle_store_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json --heldout_logprobs_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl' --output_dir 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS' --seed_budget 4 --active_budget 4 --group_field ab_position",
+            "python scripts/audit_preference_evaluation.py --output_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json' --preference_predictions_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl' --judge_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl' --capability_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl' --aulc_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl'"
+          ],
+          "depends_on": [
+            "training"
+          ],
+          "inputs": {
+            "aulc_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl",
+            "capability_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl",
+            "heldout_oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json",
+            "heldout_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl",
+            "judge_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl",
+            "preference_predictions_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl",
+            "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "aulc_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl",
+            "capability_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl",
+            "evaluation_metrics_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json",
+            "heldout_logprobs_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl",
+            "judge_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl",
+            "preference_predictions_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl"
+          },
+          "present_inputs": [
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json",
+            "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl"
+          ],
+          "stage": "evaluation",
+          "status": "complete"
+        },
+        {
+          "blocker": null,
+          "commands": [
+            "python scripts/build_dpo_run_record.py --selection_summary_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selection_summary.json' --reveal_summary_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/summary.json' --training_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl' --training_summary_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json' --evaluation_metrics_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json' --cost_report_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/cost_report.json' --output_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/run_record.json' --dataset helpsteer2_preference --model qwen3-0.6b --method 'ActiveDPO+DCMS' --budget 4 --seed 1 --config_hash cd4c4fc5c7c12d99a52985b293f8dfb836b0ff3c246452fb122dc41fb02947d8"
+          ],
+          "depends_on": [
+            "evaluation"
+          ],
+          "inputs": {
+            "cost_report_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/cost_report.json",
+            "dpo_train_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl",
+            "evaluation_metrics_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json",
+            "reveal_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/summary.json",
+            "revealed_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/revealed_rows.jsonl",
+            "selection_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selection_summary.json",
+            "training_summary_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json"
+          },
+          "missing_inputs": [],
+          "missing_outputs": [],
+          "outputs": {
+            "run_record_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/run_record.json"
+          },
+          "present_inputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/cost_report.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/dpo_train_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/revealed_rows.jsonl",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/selection_summary.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/summary.json",
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/training_summary.json"
+          ],
+          "present_outputs": [
+            "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/run_record.json"
+          ],
+          "stage": "summary",
+          "status": "complete"
+        }
+      ],
+      "training_config_hash": "b5fb9ad719b7124b05536fffb2004294589db6c080a9a320485d9fc2f7ad101e"
+    }
+  ]
+}

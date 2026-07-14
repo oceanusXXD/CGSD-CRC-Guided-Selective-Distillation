@@ -43,6 +43,7 @@ def main() -> None:
     output_dir = args.output_dir
     write_jsonl(artifacts.preference_rows, output_dir / "heldout_preference_predictions.jsonl")
     write_jsonl(artifacts.judge_rows, output_dir / "judge_rows.jsonl")
+    write_jsonl(artifacts.capability_rows, output_dir / "capability_rows.jsonl")
     write_jsonl(artifacts.aulc_rows, output_dir / "aulc_rows.jsonl")
     payload = {
         "input_paths": {
@@ -53,6 +54,7 @@ def main() -> None:
         "output_paths": {
             "preference_predictions_path": str(output_dir / "heldout_preference_predictions.jsonl"),
             "judge_rows_path": str(output_dir / "judge_rows.jsonl"),
+            "capability_rows_path": str(output_dir / "capability_rows.jsonl"),
             "aulc_rows_path": str(output_dir / "aulc_rows.jsonl"),
         },
         "evaluation_metrics": artifacts.metrics,

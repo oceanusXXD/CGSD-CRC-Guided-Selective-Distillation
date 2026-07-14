@@ -53,6 +53,7 @@ def build_preference_run_evaluation_artifacts(
         raise ValueError("heldout logprobs must exactly cover the heldout pool: " + "; ".join(details))
 
     preference_rows: list[dict[str, Any]] = []
+    capability_rows: list[dict[str, Any]] = []
     excluded_tie_ids: list[str] = []
     for sample_id, pool_row in pool_by_id.items():
         if sample_id not in oracle_store:
@@ -77,6 +78,15 @@ def build_preference_run_evaluation_artifacts(
                 "policy_preference_margin": policy_margin,
                 "reference_preference_margin": reference_margin,
                 "evaluation_source": FIXED_HUMAN_PAIRWISE_EVALUATION_SOURCE,
+            }
+        )
+        preferred_suffix = "1" if oracle_label == "A" else "2"
+        capability_rows.append(
+            {
+                "sample_id": sample_id,
+                "baseline_score": float(logprob_row[f"reference_logprob_response_{preferred_suffix}"]),
+                "policy_score": float(logprob_row[f"policy_logprob_response_{preferred_suffix}"]),
+                "capability_definition": PREFERRED_RESPONSE_LOGPROB_PROXY,
             }
         )
 
@@ -108,6 +118,7 @@ def build_preference_run_evaluation_artifacts(
     metrics = build_preference_evaluation_metrics(
         preference_rows=preference_rows,
         judge_rows=judge_rows,
+        capability_rows=capability_rows,
         aulc_rows=aulc_rows,
         group_field="observable_group",
         length_bin_field="length_gap_bin",
@@ -115,7 +126,7 @@ def build_preference_run_evaluation_artifacts(
     return PreferenceRunEvaluationArtifacts(
         preference_rows=preference_rows,
         judge_rows=judge_rows,
-        capability_rows=[],
+        capability_rows=capability_rows,
         aulc_rows=aulc_rows,
         metrics=metrics,
         initial_metrics={
@@ -125,8 +136,8 @@ def build_preference_run_evaluation_artifacts(
         metadata={
             "evaluation_source": FIXED_HUMAN_PAIRWISE_EVALUATION_SOURCE,
             "generation_judge_available": False,
-            "capability_evaluation_available": False,
-            "capability_definition": None,
+            "capability_evaluation_available": True,
+            "capability_definition": PREFERRED_RESPONSE_LOGPROB_PROXY,
             "excluded_tie_count": len(excluded_tie_ids),
             "excluded_tie_ids": excluded_tie_ids,
             "capability_proxy_definition": PREFERRED_RESPONSE_LOGPROB_PROXY,

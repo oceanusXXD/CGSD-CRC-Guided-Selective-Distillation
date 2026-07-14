@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
+import heapq
 import math
 import random
 import re
 from statistics import mean, median, pstdev
 from typing import Any, Mapping
+
+import numpy as np
 
 from mias_dcms.selection.dcms import rank_normalize_utilities, solve_dcms_with_slack
 from mias_dcms.selectors import (
@@ -225,7 +228,12 @@ def _select_badge(
     embedding is combined with the predicted-class residual, matching the
     BADGE gradient proxy while keeping selection label-safe.
     """
-    vectors = [_badge_gradient_embedding(row) for row in candidates]
+    representations = _representation_matrix(candidates)
+    probabilities = np.asarray([_probabilities(row) for row in candidates], dtype=np.float32)
+    predicted = probabilities.argmax(axis=1)
+    residuals = -probabilities
+    residuals[np.arange(len(candidates)), predicted] += 1.0
+    vectors = (residuals[:, :, None] * representations[:, None, :]).reshape(len(candidates), -1)
     selected_indexes = _farthest_point_indexes(vectors, budget=budget, seed=seed)
     return [candidates[index] for index in selected_indexes]
 
@@ -237,7 +245,7 @@ def _select_galaxy(
     seed: int,
 ) -> list[dict[str, Any]]:
     """Select a graph-covering batch using frozen representation embeddings."""
-    vectors = [_representation_embedding(row) for row in candidates]
+    vectors = _representation_matrix(candidates)
     selected_indexes = _facility_location_indexes(vectors, candidates, budget=budget, seed=seed)
     return [candidates[index] for index in selected_indexes]
 
@@ -273,82 +281,89 @@ def _representation_embedding(row: Mapping[str, Any]) -> list[float]:
     return [item / norm for item in vector]
 
 
+def _representation_matrix(rows: list[Mapping[str, Any]]) -> np.ndarray:
+    """Validate and normalize frozen representations in one dense matrix."""
+    vectors = [_representation_embedding(row) for row in rows]
+    if not vectors:
+        return np.empty((0, 0), dtype=np.float32)
+    dimensions = {len(vector) for vector in vectors}
+    if len(dimensions) != 1:
+        raise ValueError("representation embeddings must have equal dimensions")
+    return np.asarray(vectors, dtype=np.float32)
+
+
 def _farthest_point_indexes(
-    vectors: list[list[float]],
+    vectors: np.ndarray,
     *,
     budget: int,
     seed: int,
 ) -> list[int]:
-    if not vectors:
+    if budget <= 0 or vectors.size == 0:
         return []
-    norms = [sum(value * value for value in vector) for vector in vectors]
-    first_candidates = [index for index, norm in enumerate(norms) if norm == max(norms)]
+    norms = np.einsum("ij,ij->i", vectors, vectors)
+    first_candidates = np.flatnonzero(norms == norms.max()).tolist()
     first = random.Random(seed).choice(sorted(first_candidates))
     selected = [first]
-    remaining = set(range(len(vectors))) - {first}
-    while len(selected) < budget and remaining:
-        best_index = max(
-            remaining,
-            key=lambda index: (
-                min(_squared_distance(vectors[index], vectors[chosen]) for chosen in selected),
-                str(index),
-            ),
-        )
+    remaining = np.ones(len(vectors), dtype=bool)
+    remaining[first] = False
+    closest_distances = _squared_distances_to(vectors, vectors[first])
+    while len(selected) < budget and bool(remaining.any()):
+        best_distance = closest_distances[remaining].max()
+        best_candidates = np.flatnonzero(remaining & (closest_distances == best_distance)).tolist()
+        best_index = max(best_candidates, key=str)
         selected.append(best_index)
-        remaining.remove(best_index)
+        remaining[best_index] = False
+        closest_distances = np.minimum(
+            closest_distances,
+            _squared_distances_to(vectors, vectors[best_index]),
+        )
     return selected
 
 
 def _facility_location_indexes(
-    vectors: list[list[float]],
+    vectors: np.ndarray,
     candidates: list[dict[str, Any]],
     *,
     budget: int,
     seed: int,
 ) -> list[int]:
-    if not vectors:
+    if budget <= 0 or vectors.size == 0:
         return []
-    similarities = [
-        [max(-1.0, min(1.0, _dot(left, right))) for right in vectors]
-        for left in vectors
-    ]
+    similarities = np.clip(vectors @ vectors.T, -1.0, 1.0)
     first = max(
         range(len(vectors)),
         key=lambda index: (_entropy(_probabilities(candidates[index])), str(candidates[index]["id"])),
     )
     selected = [first]
-    remaining = set(range(len(vectors))) - {first}
-    current_coverage = [similarities[index][first] for index in range(len(vectors))]
-    while len(selected) < budget and remaining:
-        best_index = max(
-            remaining,
-            key=lambda candidate_index: (
-                sum(
-                    max(0.0, similarities[index][candidate_index] - current_coverage[index])
-                    for index in range(len(vectors))
-                ),
-                str(candidates[candidate_index]["id"]),
-            ),
-        )
+    remaining = np.ones(len(vectors), dtype=bool)
+    remaining[first] = False
+    current_coverage = similarities[:, first]
+    initial_gains = np.maximum(similarities - current_coverage[:, None], 0.0).sum(axis=0)
+    queue = [
+        (-float(initial_gains[index]), -index, index)
+        for index in range(len(vectors))
+        if remaining[index]
+    ]
+    heapq.heapify(queue)
+    while len(selected) < budget and queue:
+        _, _, candidate_index = heapq.heappop(queue)
+        if not remaining[candidate_index]:
+            continue
+        gain = float(np.maximum(similarities[:, candidate_index] - current_coverage, 0.0).sum())
+        next_upper_bound = -queue[0][0] if queue else float("-inf")
+        if gain + 1e-6 < next_upper_bound:
+            heapq.heappush(queue, (-gain, -candidate_index, candidate_index))
+            continue
+        best_index = candidate_index
         selected.append(best_index)
-        remaining.remove(best_index)
-        current_coverage = [
-            max(current_coverage[index], similarities[index][best_index])
-            for index in range(len(vectors))
-        ]
+        remaining[best_index] = False
+        current_coverage = np.maximum(current_coverage, similarities[:, best_index])
     return selected
 
 
-def _dot(left: list[float], right: list[float]) -> float:
-    if len(left) != len(right):
-        raise ValueError("representation embeddings must have equal dimensions")
-    return sum(a * b for a, b in zip(left, right, strict=True))
-
-
-def _squared_distance(left: list[float], right: list[float]) -> float:
-    if len(left) != len(right):
-        raise ValueError("representation embeddings must have equal dimensions")
-    return sum((a - b) ** 2 for a, b in zip(left, right, strict=True))
+def _squared_distances_to(vectors: np.ndarray, center: np.ndarray) -> np.ndarray:
+    differences = vectors - center
+    return np.einsum("ij,ij->i", differences, differences)
 
 
 def selector_safe_view(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:

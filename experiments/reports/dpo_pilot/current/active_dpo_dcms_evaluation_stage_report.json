@@ -1,0 +1,152 @@
+{
+  "command_count": 3,
+  "dry_run": false,
+  "failed_command_count": 0,
+  "limit": 0,
+  "manifest_path": "experiments/runs/dpo_pilot/current/execution_manifest.json",
+  "method": "ActiveDPO+DCMS",
+  "records": [
+    {
+      "command": "python scripts/generate_preference_logprobs.py --input_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl --output_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl' --summary_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.summary.json' --policy_model_path Qwen/Qwen3-0.6B --reference_model_path Qwen/Qwen3-0.6B --policy_adapter_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter' --reference_adapter_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_adapter --batch_size 1 --row_batch_size 1 --max_length 256 --torch_dtype float32 --resume --device cpu",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "ActiveDPO+DCMS",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget4__seed1__activedpo_dcms",
+      "seed": 1,
+      "stage": "evaluation",
+      "status": "complete",
+      "stderr_char_count": 0,
+      "stderr_preview": "",
+      "stderr_truncated": false,
+      "stdout_char_count": 1858,
+      "stdout_json_summary": {
+        "audit": {
+          "absolute_implicit_margin_mean": 0.007199287414550781,
+          "finite_row_count": 4,
+          "implicit_margin_not_all_zero": true,
+          "implicit_reward_gap_mean": 0.007199287414550781,
+          "implicit_reward_gap_sign_counts": {
+            "negative": 0,
+            "positive": 4,
+            "zero": 0
+          },
+          "implicit_reward_gap_variance": 5.4165636356628966e-05,
+          "logprob_fields": {
+            "policy_response_1": "policy_logprob_response_1",
+            "policy_response_2": "policy_logprob_response_2",
+            "reference_response_1": "reference_logprob_response_1",
+            "reference_response_2": "reference_logprob_response_2"
+          },
+          "policy_gap_mean": 6.75548791885376,
+          "policy_gap_variance": 182.4419610455177,
+          "reference_gap_mean": 6.748288631439209,
+          "reference_gap_variance": 182.26488673113158,
+          "row_count": 4
+        },
+        "batch_size": 1,
+        "device": "cpu",
+        "id_field": "sample_id",
+        "input_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl",
+        "local_files_only": true,
+        "max_length": 256,
+        "output_path": "/teamspace/studios/this_studio/LLM_layer_test/experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl",
+        "policy_adapter_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter",
+        "policy_model_path": "Qwen/Qwen3-0.6B",
+        "prompt_field": "prompt",
+        "prompt_format": "chatml_pairwise_v1",
+        "reference_adapter_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_adapter",
+        "reference_model_path": "Qwen/Qwen3-0.6B",
+        "response_1_field": "response_a",
+        "response_2_field": "response_b",
+        "response_suffix": "",
+        "resume_source": "complete_output",
+        "resumed": true,
+        "row_batch_size": 1,
+        "row_count": 4,
+        "sequence_count": 8,
+        "tokenizer_path": "Qwen/Qwen3-0.6B",
+        "torch_dtype": "float32",
+        "truncated_sequence_count": 0,
+        "truncation_strategy": "truncate_prompt_left"
+      },
+      "stdout_preview": "{\"audit\": {\"absolute_implicit_margin_mean\": 0.007199287414550781, \"finite_row_count\": 4, \"implicit_margin_not_all_zero\": true, \"implicit_reward_gap_mean\": 0.007199287414550781, \"implicit_reward_gap_sign_counts\": {\"negative\": 0, \"positive\": 4, \"zero\": 0}, \"implicit_reward_gap_variance\": 5.4165636356628966e-05, \"logprob_fields\": {\"policy_response_1\": \"policy_logprob_response_1\", \"policy_response_2\": \"policy_logprob_response_2\", \"reference_response_1\": \"reference_logprob_response_1\", \"reference_response_2\": \"reference_logprob_response_2\"}, \"policy_gap_mean\": 6.75548791885376, \"policy_gap_variance\": 182.4419610455177, \"reference_gap_mean\": 6.748288631439209, \"reference_gap_variance\": 182.26488673113158, \"row_count\": 4}, \"batch_size\": 1, \"device\": \"cpu\", \"id_field\": \"sample_id\", \"input_path\": \"experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl\", \"local_files_only\": true, \"max_length\": 256, \"output_path\": \"/teamspace/studios/this_studio/LLM_layer_test/experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl\", \"policy_adapter_path\": \"experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/policy_adapter\", \"policy_model_path\": \"Qwen/Qwen3-0.6B\", \"prompt_field\": \"prompt\", \"prompt_format\": \"chatml_pairwise_v1\", \"reference_adapter_path\": \"experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_policy_adapter\", \"reference_model_path\": \"Qwen/Qwen3-0.6B\", \"response_1_field\": \"response_a\", \"response_2_field\": \"response_b\", \"response_suffix\": \"\", \"resume_source\": \"complete_output\", \"resumed\": true, \"row_batch_size\": 1, \"row_count\": 4, \"sequence_count\": 8, \"tokenizer_path\": \"Qwen/Qwen3-0.6B\", \"torch_dtype\": \"float32\", \"truncated_sequence_count\": 0, \"truncation_strategy\": \"truncate_prompt_left\"}",
+      "stdout_truncated": false
+    },
+    {
+      "command": "python scripts/materialize_preference_dpo_evaluation.py --heldout_pool_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl --heldout_oracle_store_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json --heldout_logprobs_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl' --output_dir 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS' --seed_budget 4 --active_budget 4 --group_field ab_position",
+      "command_index": 1,
+      "dry_run": false,
+      "method": "ActiveDPO+DCMS",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget4__seed1__activedpo_dcms",
+      "seed": 1,
+      "stage": "evaluation",
+      "status": "complete",
+      "stderr_char_count": 0,
+      "stderr_preview": "",
+      "stderr_truncated": false,
+      "stdout_char_count": 1751,
+      "stdout_json_summary": {
+        "evaluation_metrics": {
+          "aulc": 0.5,
+          "aulc_point_count": 2,
+          "capability_eval_count": 4,
+          "capability_regression": -0.004952430725097656,
+          "judge_eval_count": 4,
+          "length_controlled_win_rate": 0.3333333333333333,
+          "preference_accuracy": 0.5,
+          "preference_eval_count": 4,
+          "raw_judge_win_rate": 0.5,
+          "worst_group_preference_accuracy": 0.0
+        },
+        "initial_evaluation_metrics": {
+          "preference_accuracy": 0.5,
+          "preference_eval_count": 4
+        },
+        "input_paths": {
+          "heldout_logprobs_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl",
+          "heldout_oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json",
+          "heldout_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl"
+        },
+        "metadata": {
+          "capability_definition": "preferred_response_logprob_proxy",
+          "capability_evaluation_available": true,
+          "capability_proxy_definition": "preferred_response_logprob_proxy",
+          "evaluation_source": "heldout_fixed_human_pairwise_labels",
+          "excluded_tie_count": 0,
+          "excluded_tie_ids": [],
+          "generation_judge_available": false
+        },
+        "output_paths": {
+          "aulc_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl",
+          "capability_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl",
+          "judge_rows_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl",
+          "preference_predictions_path": "experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl"
+        }
+      },
+      "stdout_preview": "{\"evaluation_metrics\": {\"aulc\": 0.5, \"aulc_point_count\": 2, \"capability_eval_count\": 4, \"capability_regression\": -0.004952430725097656, \"judge_eval_count\": 4, \"length_controlled_win_rate\": 0.3333333333333333, \"preference_accuracy\": 0.5, \"preference_eval_count\": 4, \"raw_judge_win_rate\": 0.5, \"worst_group_preference_accuracy\": 0.0}, \"initial_evaluation_metrics\": {\"preference_accuracy\": 0.5, \"preference_eval_count\": 4}, \"input_paths\": {\"heldout_logprobs_path\": \"experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_logprobs.jsonl\", \"heldout_oracle_store_path\": \"experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_oracle_store.json\", \"heldout_pool_path\": \"experiments/inputs/preference/helpsteer2_preference/cpu_pilot/heldout_pool.jsonl\"}, \"metadata\": {\"capability_definition\": \"preferred_response_logprob_proxy\", \"capability_evaluation_available\": true, \"capability_proxy_definition\": \"preferred_response_logprob_proxy\", \"evaluation_source\": \"heldout_fixed_human_pairwise_labels\", \"excluded_tie_count\": 0, \"excluded_tie_ids\": [], \"generation_judge_available\": false}, \"output_paths\": {\"aulc_rows_path\": \"experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl\", \"capability_rows_path\": \"experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl\", \"judge_rows_path\": \"experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl\", \"preference_predictions_path\": \"experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl\"}}",
+      "stdout_truncated": false
+    },
+    {
+      "command": "python scripts/audit_preference_evaluation.py --output_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/evaluation_metrics.json' --preference_predictions_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/heldout_preference_predictions.jsonl' --judge_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/judge_rows.jsonl' --capability_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/capability_rows.jsonl' --aulc_rows_path 'experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/ActiveDPO+DCMS/aulc_rows.jsonl'",
+      "command_index": 2,
+      "dry_run": false,
+      "method": "ActiveDPO+DCMS",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget4__seed1__activedpo_dcms",
+      "seed": 1,
+      "stage": "evaluation",
+      "status": "complete",
+      "stderr_char_count": 0,
+      "stderr_preview": "",
+      "stderr_truncated": false,
+      "stdout_char_count": 0,
+      "stdout_preview": "",
+      "stdout_truncated": false
+    }
+  ],
+  "run_id": null,
+  "seed": 1,
+  "stage": "evaluation"
+}

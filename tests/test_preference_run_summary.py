@@ -39,6 +39,15 @@ class PreferenceRunSummaryTest(unittest.TestCase):
                 "pool_size": 10,
                 "selected_score_min": 0.7,
                 "selected_score_max": 0.9,
+                "continuous_moments": {"prompt_cluster=c0": 0.4},
+                "rounded_moments": {"prompt_cluster=c0": 0.5},
+                "robust_lower_moments": {"prompt_cluster=c0": 0.3},
+                "robust_upper_moments": {"prompt_cluster=c0": 0.6},
+                "utility_retained": 0.96,
+                "max_constraint_violation": 0.04,
+                "solver_status": "scalable_slsqp",
+                "selected_slack": 0.2,
+                "rounding_seed": 7,
                 "selection_metrics": {"acquisition_tv": 0.12},
             },
             reveal_summary={
@@ -68,6 +77,13 @@ class PreferenceRunSummaryTest(unittest.TestCase):
         self.assertEqual(2, payload["selected_count"])
         self.assertEqual(0.12, payload["selection_metrics"]["acquisition_tv"])
         self.assertEqual(0.7, payload["selection_metrics"]["selected_score_min"])
+        self.assertEqual({"prompt_cluster=c0": 0.4}, payload["continuous_moments"])
+        self.assertEqual({"prompt_cluster=c0": 0.5}, payload["rounded_moments"])
+        self.assertEqual(0.96, payload["utility_retained"])
+        self.assertEqual(0.04, payload["max_constraint_violation"])
+        self.assertEqual("scalable_slsqp", payload["solver_status"])
+        self.assertEqual(0.2, payload["selected_slack"])
+        self.assertEqual(7, payload["rounding_seed"])
         self.assertEqual(1, payload["training_metrics"]["dpo_train_row_count"])
         self.assertEqual(4, payload["cost_metrics"]["seed_label_count"])
         self.assertEqual(2, payload["cost_metrics"]["active_label_count"])

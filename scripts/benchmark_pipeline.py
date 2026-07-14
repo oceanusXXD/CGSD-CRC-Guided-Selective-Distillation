@@ -72,6 +72,15 @@ def parse_args() -> argparse.Namespace:
     classification_scoring.add_argument("--label-names")
     _add_scoring_arguments(classification_scoring)
 
+    merge_classification = subparsers.add_parser("merge-classification-scores")
+    merge_classification.add_argument("--source-path", type=Path, required=True)
+    merge_classification.add_argument("--scored-paths", type=Path, nargs="+", required=True)
+    merge_classification.add_argument("--output-path", type=Path, required=True)
+
+    sanitize_classification = subparsers.add_parser("sanitize-classification-scores")
+    sanitize_classification.add_argument("--input-path", type=Path, required=True)
+    sanitize_classification.add_argument("--output-path", type=Path, required=True)
+
     preference_scoring = subparsers.add_parser("score-preference")
     preference_scoring.add_argument("--data-path", type=Path, required=True)
     preference_scoring.add_argument("--output-path", type=Path, required=True)
@@ -160,6 +169,14 @@ def main() -> None:
         download_helpsteer2(output_dir=args.output_dir)
     elif args.command == "score-classification":
         run_classification_scoring(args)
+    elif args.command == "merge-classification-scores":
+        merge_classification_scores(
+            source_path=args.source_path,
+            scored_paths=args.scored_paths,
+            output_path=args.output_path,
+        )
+    elif args.command == "sanitize-classification-scores":
+        sanitize_classification_scores(input_path=args.input_path, output_path=args.output_path)
     elif args.command == "score-preference":
         run_preference_scoring(args)
     elif args.command == "train-classification-lora":
@@ -208,6 +225,17 @@ def _add_scoring_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--torch-dtype", default="auto")
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--start-offset",
+        type=int,
+        default=0,
+        help="Start at this zero-based row offset; use distinct outputs for parallel shards.",
+    )
+    parser.add_argument(
+        "--sort-by-text-length",
+        action="store_true",
+        help="Score shorter classification prompts together; output ids can be restored with merge-classification-scores.",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument(
@@ -392,9 +420,15 @@ def download_helpsteer2(*, output_dir: Path) -> dict[str, Any]:
 
 
 def run_classification_scoring(args: argparse.Namespace) -> dict[str, Any]:
-    rows = _read_jsonl(args.data_path)
+    source_rows = _read_jsonl(args.data_path)
+    start_offset = int(args.start_offset)
+    if start_offset < 0 or start_offset > len(source_rows):
+        raise ValueError(f"start offset must be between 0 and {len(source_rows)}")
+    rows = source_rows[start_offset:]
     if args.limit is not None:
         rows = rows[: args.limit]
+    if bool(args.sort_by_text_length):
+        rows.sort(key=lambda row: (len(str(row.get("text", ""))), str(row["id"])))
     label_names = _resolve_label_names(rows, args.label_names)
     resumed_size = _resume_size(rows, args.output_path, resume=args.resume)
     scorer = _load_scorer(args) if resumed_size < len(rows) else None
@@ -413,6 +447,8 @@ def run_classification_scoring(args: argparse.Namespace) -> dict[str, Any]:
         "model": args.model,
         "data_path": str(args.data_path),
         "output_path": str(args.output_path),
+        "start_offset": start_offset,
+        "sort_by_text_length": bool(args.sort_by_text_length),
         "size": len(scored),
         "resumed_size": resumed_size,
         "newly_scored_size": len(scored) - resumed_size,
@@ -424,6 +460,66 @@ def run_classification_scoring(args: argparse.Namespace) -> dict[str, Any]:
         ),
     }
     _write_json(_summary_path(args.output_path), summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
+def merge_classification_scores(
+    *,
+    source_path: Path,
+    scored_paths: list[Path],
+    output_path: Path,
+) -> dict[str, Any]:
+    """Combine independently scored shards after proving exact id coverage."""
+    source_rows = _read_jsonl(source_path)
+    source_ids = [str(row.get("id", "")) for row in source_rows]
+    if not all(source_ids) or len(set(source_ids)) != len(source_ids):
+        raise ValueError("source rows must contain unique non-empty ids")
+
+    scored_by_id: dict[str, dict[str, Any]] = {}
+    for scored_path in scored_paths:
+        for row in _read_jsonl(scored_path):
+            sample_id = str(row.get("id", ""))
+            if not sample_id:
+                raise ValueError(f"scored row in {scored_path} is missing id")
+            if sample_id in scored_by_id:
+                raise ValueError(f"duplicate scored id across shards: {sample_id!r}")
+            scored_by_id[sample_id] = row
+
+    source_id_set = set(source_ids)
+    missing = [sample_id for sample_id in source_ids if sample_id not in scored_by_id]
+    extra = sorted(set(scored_by_id) - source_id_set)
+    if missing or extra:
+        raise ValueError(
+            "scored shard coverage does not match source rows: "
+            f"missing={missing[:5]}, extra={extra[:5]}"
+        )
+
+    merged_rows = [scored_by_id[sample_id] for sample_id in source_ids]
+    _write_jsonl(output_path, merged_rows)
+    summary = {
+        "task": "merge_classification_scores",
+        "source_path": str(source_path),
+        "scored_paths": [str(path) for path in scored_paths],
+        "output_path": str(output_path),
+        "size": len(merged_rows),
+    }
+    _write_json(_summary_path(output_path), summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
+def sanitize_classification_scores(*, input_path: Path, output_path: Path) -> dict[str, Any]:
+    """Materialize a selector-safe scored classification pool without rescoring."""
+    rows = selector_safe_view(_read_jsonl(input_path))
+    _write_jsonl(output_path, rows)
+    summary = {
+        "task": "sanitize_classification_scores",
+        "input_path": str(input_path),
+        "output_path": str(output_path),
+        "size": len(rows),
+    }
+    _write_json(_summary_path(output_path), summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
 
@@ -593,9 +689,10 @@ def score_classification_rows(
                 "probabilities": [float(value) for value in probabilities],
                 "predicted_label": predicted_label,
                 "predicted_label_name": label_names[predicted_label],
-                "prediction_correct": predicted_label == groundtruth if groundtruth is not None else None,
                 **_uncertainty_fields(probabilities),
             }
+            if groundtruth is not None:
+                scored_row["prediction_correct"] = predicted_label == groundtruth
             if representation is not None:
                 scored_row["representation_embedding"] = [float(value) for value in representation]
             scored.append(scored_row)
@@ -769,16 +866,32 @@ def diagnose_classification(
         method_reports: dict[str, Any] = {}
         safe_rows = selector_safe_view(rows)
         rows_by_id = {str(row["id"]): row for row in audit_rows}
-        for budget in budgets:
-            selected_safe, selection_metadata = select_classification_rows(
+        normalized_method = str(method).strip().lower().replace("+", "_").replace("-", "_")
+        cached_selection: list[dict[str, Any]] | None = None
+        if budgets and not normalized_method.endswith("_dcms"):
+            cached_selection, _ = select_classification_rows(
                 safe_rows,
                 method=method,
-                budget=budget,
+                budget=max(budgets),
                 seed=seed,
                 dcms_target=dcms_target,
                 dcms_slack_grid=dcms_slack_grid,
                 dcms_kappa=dcms_kappa,
             )
+        for budget in budgets:
+            if cached_selection is None:
+                selected_safe, selection_metadata = select_classification_rows(
+                    safe_rows,
+                    method=method,
+                    budget=budget,
+                    seed=seed,
+                    dcms_target=dcms_target,
+                    dcms_slack_grid=dcms_slack_grid,
+                    dcms_kappa=dcms_kappa,
+                )
+            else:
+                selected_safe = cached_selection[:budget]
+                selection_metadata = None
             selected = [rows_by_id[str(row["id"])] for row in selected_safe]
             _write_jsonl(output_dir / f"{method}_budget_{budget}.jsonl", selected)
             selected_ids = {str(row["id"]) for row in selected}

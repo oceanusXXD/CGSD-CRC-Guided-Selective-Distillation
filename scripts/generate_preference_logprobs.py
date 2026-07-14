@@ -236,8 +236,6 @@ def _resolve_model_source(value: str, *, local_files_only: bool) -> str:
     candidate = Path(raw)
     if candidate.is_absolute() or candidate.exists() or (PROJECT_ROOT / candidate).exists():
         return str(resolve_input_path(candidate, PROJECT_ROOT))
-    if local_files_only:
-        return str(resolve_input_path(candidate, PROJECT_ROOT))
     return raw
 
 

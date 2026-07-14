@@ -1,0 +1,54 @@
+{
+  "command_count": 1,
+  "dry_run": false,
+  "failed_command_count": 0,
+  "limit": 0,
+  "manifest_path": "experiments/runs/dpo_pilot/current/execution_manifest.json",
+  "method": "Random",
+  "records": [
+    {
+      "command": "python scripts/select_preference_random.py --input_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl --output_dir experiments/runs/dpo_pilot/current/helpsteer2_preference/qwen3-0.6b/budget_4/seed_1/Random --budget 4 --seed 1 --metadata_path experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl",
+      "command_index": 0,
+      "dry_run": false,
+      "method": "Random",
+      "returncode": 0,
+      "run_id": "helpsteer2_preference__qwen3-0_6b__budget4__seed1__random",
+      "seed": 1,
+      "stage": "selection",
+      "status": "complete",
+      "stderr_char_count": 0,
+      "stderr_preview": "",
+      "stderr_truncated": false,
+      "stdout_char_count": 569,
+      "stdout_json_summary": {
+        "budget": 4,
+        "input_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+        "method": "random",
+        "pool_size": 20,
+        "seed": 1,
+        "selected_count": 4,
+        "selection_group_field": null,
+        "selection_metrics": {
+          "acquisition_tv": 0.6,
+          "audited_group_fields": [
+            "length_gap_bin",
+            "source_pair",
+            "prompt_cluster",
+            "ab_position",
+            "length_by_prompt_cluster"
+          ],
+          "max_constraint_violation": 0.0,
+          "maximum_propensity_ratio": 3.0,
+          "total_absolute_prediction_error": 5.551115123125783e-17,
+          "utility_retained": 1.0,
+          "utility_retained_not_applicable": true
+        }
+      },
+      "stdout_preview": "{\"budget\": 4, \"input_path\": \"experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl\", \"method\": \"random\", \"pool_size\": 20, \"seed\": 1, \"selected_count\": 4, \"selection_group_field\": null, \"selection_metrics\": {\"acquisition_tv\": 0.6, \"audited_group_fields\": [\"length_gap_bin\", \"source_pair\", \"prompt_cluster\", \"ab_position\", \"length_by_prompt_cluster\"], \"max_constraint_violation\": 0.0, \"maximum_propensity_ratio\": 3.0, \"total_absolute_prediction_error\": 5.551115123125783e-17, \"utility_retained\": 1.0, \"utility_retained_not_applicable\": true}}",
+      "stdout_truncated": false
+    }
+  ],
+  "run_id": null,
+  "seed": 1,
+  "stage": "selection"
+}

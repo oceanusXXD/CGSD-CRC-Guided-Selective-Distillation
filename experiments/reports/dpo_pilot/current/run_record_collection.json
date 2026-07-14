@@ -1,0 +1,12 @@
+{
+  "completed_run_count": 2,
+  "failed_run_count": 0,
+  "incomplete_run_count": 0,
+  "is_ready": true,
+  "issue_count": 0,
+  "issues": [],
+  "manifest_path": "experiments/runs/dpo_pilot/current/execution_manifest.json",
+  "output_records_path": "experiments/reports/dpo_pilot/current/run_records.jsonl",
+  "output_report_path": "experiments/reports/dpo_pilot/current/run_record_collection.json",
+  "record_count": 2
+}

@@ -51,6 +51,7 @@ At the codebase level, the active tree currently provides:
 - real initial DPO policy checkpoint registration for Gate 4 evidence, with required adapter-file validation;
 - DPO execution manifest generation for ordered selection, reveal, training, evaluation, and run-summary stages;
 - DPO execution status auditing for completed, blocked, in-progress, and failed runs from manifest artifacts;
+- a completed two-run CPU HelpSteer2 DPO pilot for Random and ActiveDPO+DCMS (seed 1);
 - DPO run-pack validation for required method/seed coverage, visible failed runs, required metrics, and paper artifact manifest traceability;
 - paired run-metric comparison for baseline-vs-treatment deltas, confidence intervals, and permutation tests;
 - paper claim-to-evidence auditing for Gate 10 claim freeze and banned overclaim detection;
@@ -71,7 +72,7 @@ The real AAAI experiment gates are not complete until the required datasets, mod
 | --- | --- | --- |
 | Binary re-audit | Split and selection materialization code | Recover per-setting raw/sample-level records before scoring. |
 | Multiclass MIAS | AG News/TREC data, fixed-split command, scoring and diagnostics | Create a fixed split, then score the selector-safe active pool. |
-| HelpSteer2 DPO | Fixed pool, initial adapter, selection logprobs, DPO stage commands | Build `selection_prompt_clusters.jsonl`, then rebuild the matrix and manifest. |
+| HelpSteer2 DPO | Fixed pool, initial adapter, selection logprobs, and two completed CPU pilot runs | Scale the pilot only after the full study matrix is frozen. |
 
 The DPO status report is derived from the manifest. Whenever a config path
 changes, rebuild the matrix and manifest before trusting an old status JSON.
@@ -271,6 +272,7 @@ Primary MIAS/DCMS entrypoints include:
 - `scripts/select_preference_baseline.py`
 - `scripts/select_preference_random.py`
 - `scripts/prepare_preference_dcms_inputs.py`
+- `scripts/prepare_preference_cpu_pilot.py`
 - `scripts/reveal_preference_labels.py`
 - `scripts/build_preference_run_summary.py`
 - `scripts/prepare_preference_splits.py`

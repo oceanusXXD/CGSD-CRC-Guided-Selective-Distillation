@@ -30,6 +30,15 @@ class SamplingDiagnosticsTest(unittest.TestCase):
                 seed=1,
             )
 
+    def test_representation_selectors_honor_zero_budget(self) -> None:
+        rows = [
+            {"id": "a", "probabilities": [0.5, 0.5], "representation_embedding": [1.0, 0.0]},
+            {"id": "b", "probabilities": [0.5, 0.5], "representation_embedding": [0.0, 1.0]},
+        ]
+
+        self.assertEqual([], select_rows(rows, method="badge", budget=0, seed=7))
+        self.assertEqual([], select_rows(rows, method="galaxy", budget=0, seed=7))
+
     def test_entropy_dcms_uses_soft_class_posterior_without_true_labels(self) -> None:
         rows = [
             {"id": "a", "probabilities": [0.99, 0.01]},

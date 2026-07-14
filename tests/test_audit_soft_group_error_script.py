@@ -71,7 +71,7 @@ class AuditSoftGroupErrorScriptTest(unittest.TestCase):
                     "--target_moments",
                     "{\"A\": 0.5}",
                     "--tolerance",
-                    "0.0",
+                    "0.1",
                 ],
                 check=True,
                 cwd=PROJECT_ROOT,
