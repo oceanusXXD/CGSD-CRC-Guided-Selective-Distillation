@@ -161,6 +161,8 @@ def materialize_binary_reaudit_selection(
                 revealed_rows.append(
                     {
                         "id": sample_id,
+                        "query": str(row["query"]),
+                        "document": str(row["document"]),
                         "text": str(row["text"]),
                         "label": label,
                         "dataset": str(dataset),

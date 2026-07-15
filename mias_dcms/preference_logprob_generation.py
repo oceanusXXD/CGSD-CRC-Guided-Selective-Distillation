@@ -37,7 +37,8 @@ def build_preference_logprob_rows(
     *,
     tokenizer: Any,
     policy_model: Any,
-    reference_model: Any,
+    reference_model: Any | None,
+    reference_rows_by_id: Mapping[str, Mapping[str, Any]] | None = None,
     device: Any,
     batch_size: int = 4,
     max_length: int = 4096,
@@ -52,6 +53,8 @@ def build_preference_logprob_rows(
     source_rows = [dict(row) for row in rows]
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    if reference_model is None and reference_rows_by_id is None:
+        raise ValueError("reference_model or reference_rows_by_id is required")
 
     sequences = build_preference_logprob_sequences(
         source_rows,
@@ -72,13 +75,23 @@ def build_preference_logprob_rows(
         device=device,
         batch_size=batch_size,
     )
-    reference_scores = score_preference_logprob_sequences(
-        reference_model,
-        sequences,
-        pad_token_id=_pad_token_id(tokenizer),
-        device=device,
-        batch_size=batch_size,
-    )
+    if reference_rows_by_id is None:
+        reference_scores = score_preference_logprob_sequences(
+            reference_model,
+            sequences,
+            pad_token_id=_pad_token_id(tokenizer),
+            device=device,
+            batch_size=batch_size,
+        )
+    else:
+        reference_scores = {
+            (sequence.sample_id, sequence.response_key): _cached_reference_score(
+                reference_rows_by_id,
+                sample_id=sequence.sample_id,
+                response_key=sequence.response_key,
+            )
+            for sequence in sequences
+        }
 
     metadata_by_key = {
         (sequence.sample_id, sequence.response_key): sequence for sequence in sequences
@@ -377,6 +390,25 @@ def _row_id(row: Mapping[str, Any], *, id_field: str) -> str:
     if value is None:
         raise ValueError(f"row is missing id field {id_field!r} and fallback 'id'")
     return str(value)
+
+
+def _cached_reference_score(
+    rows_by_id: Mapping[str, Mapping[str, Any]],
+    *,
+    sample_id: str,
+    response_key: str,
+) -> float:
+    row = rows_by_id.get(str(sample_id))
+    if row is None:
+        raise ValueError(f"reference cache is missing sample id {sample_id!r}")
+    field = (
+        DEFAULT_REFERENCE_RESPONSE_1_FIELD
+        if response_key == "response_1"
+        else DEFAULT_REFERENCE_RESPONSE_2_FIELD
+    )
+    if field not in row:
+        raise ValueError(f"reference cache row {sample_id!r} is missing {field!r}")
+    return float(row[field])
 
 
 def _sigmoid(value: float) -> float:

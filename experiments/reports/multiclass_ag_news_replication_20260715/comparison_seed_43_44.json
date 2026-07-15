@@ -1,0 +1,178 @@
+{
+  "baseline_method": "Random",
+  "comparisons": [
+    {
+      "baseline_mean": 0.8901,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0040000000000000036,
+      "delta_ci_low": -0.0010000000000000009,
+      "delta_mean": 0.0015000000000000013,
+      "metric": "accuracy",
+      "metric_group": "evaluation_metrics",
+      "p_value": 1.0,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.8916,
+      "treatment_method": "Entropy+DCMS"
+    },
+    {
+      "baseline_mean": 0.8896139039132331,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.004114587893651378,
+      "delta_ci_low": -0.0010526304399099962,
+      "delta_mean": 0.001530978726870691,
+      "metric": "macro_f1",
+      "metric_group": "evaluation_metrics",
+      "p_value": 1.0,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.8911448826401038,
+      "treatment_method": "Entropy+DCMS"
+    },
+    {
+      "baseline_mean": 0.8429638833731677,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.004292979776316153,
+      "delta_ci_low": 0.003011098566346515,
+      "delta_mean": 0.003652039171331334,
+      "metric": "worst_class_f1",
+      "metric_group": "evaluation_metrics",
+      "p_value": 0.46353646353646355,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.8466159225444991,
+      "treatment_method": "Entropy+DCMS"
+    },
+    {
+      "baseline_mean": 0.02600000000000001,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.148,
+      "delta_ci_low": 0.04720000000000005,
+      "delta_mean": 0.09760000000000002,
+      "metric": "acquisition_tv",
+      "metric_group": "selection_metrics",
+      "p_value": 0.48451548451548454,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.12360000000000003,
+      "treatment_method": "Entropy+DCMS"
+    },
+    {
+      "baseline_mean": 1.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -0.014680703231919168,
+      "delta_ci_low": -0.020224444678387132,
+      "delta_mean": -0.01745257395515315,
+      "metric": "utility_retained",
+      "metric_group": "selection_metrics",
+      "p_value": 0.5054945054945055,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.9825474260448468,
+      "treatment_method": "Entropy+DCMS"
+    },
+    {
+      "baseline_mean": 400.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0,
+      "delta_ci_low": 0.0,
+      "delta_mean": 0.0,
+      "metric": "seed_label_count",
+      "metric_group": "cost_metrics",
+      "p_value": 1.0,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 400.0,
+      "treatment_method": "Entropy+DCMS"
+    },
+    {
+      "baseline_mean": 500.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0,
+      "delta_ci_low": 0.0,
+      "delta_mean": 0.0,
+      "metric": "active_label_count",
+      "metric_group": "cost_metrics",
+      "p_value": 1.0,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 500.0,
+      "treatment_method": "Entropy+DCMS"
+    },
+    {
+      "baseline_mean": 5000.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0,
+      "delta_ci_low": 0.0,
+      "delta_mean": 0.0,
+      "metric": "evaluation_label_count",
+      "metric_group": "cost_metrics",
+      "p_value": 1.0,
+      "paired_count": 2,
+      "paired_seeds": [
+        43,
+        44
+      ],
+      "permutations": 1000,
+      "treatment_mean": 5000.0,
+      "treatment_method": "Entropy+DCMS"
+    }
+  ],
+  "cost_metrics": [
+    "seed_label_count",
+    "active_label_count",
+    "evaluation_label_count"
+  ],
+  "evaluation_metrics": [
+    "accuracy",
+    "macro_f1",
+    "worst_class_f1"
+  ],
+  "input_path": "experiments/reports/multiclass_ag_news_replication_20260715/run_records.jsonl",
+  "is_ready": true,
+  "issues": [],
+  "selection_metrics": [
+    "acquisition_tv",
+    "utility_retained"
+  ],
+  "training_metrics": [],
+  "treatment_methods": [
+    "Entropy+DCMS"
+  ]
+}

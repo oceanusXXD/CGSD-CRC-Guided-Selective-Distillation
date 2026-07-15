@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokenizer_path")
     parser.add_argument("--policy_adapter_path")
     parser.add_argument("--reference_adapter_path")
+    parser.add_argument(
+        "--reference_logprobs_path",
+        type=Path,
+        help="Reuse audited reference response log-probs and score only the policy model.",
+    )
     parser.add_argument("--prompt_field", default="prompt")
     parser.add_argument("--response_1_field", default="response_a")
     parser.add_argument("--response_2_field", default="response_b")
@@ -114,10 +119,22 @@ def main() -> None:
         if args.reference_adapter_path is not None
         else None
     )
+    reference_logprobs_path = (
+        resolve_input_path(args.reference_logprobs_path, PROJECT_ROOT)
+        if args.reference_logprobs_path is not None
+        else None
+    )
 
     if int(args.row_batch_size) <= 0:
         raise ValueError("row_batch_size must be positive")
     source_rows = read_jsonl(input_path)
+    reference_rows_by_id = (
+        _load_reference_logprob_rows(reference_logprobs_path, id_field=str(args.id_field))
+        if reference_logprobs_path is not None
+        else None
+    )
+    if reference_rows_by_id is not None and reference_adapter_path is not None:
+        raise ValueError("reference_adapter_path cannot be combined with reference_logprobs_path")
     partial_path = _partial_path(output_path)
     completed_by_id, resume_source = _load_completed_rows(
         source_rows,
@@ -146,14 +163,16 @@ def main() -> None:
             local_files_only=bool(args.local_files_only),
             adapter_path=policy_adapter_path,
         )
-        reference_model = load_causal_lm_for_logprobs(
-            reference_model_path,
-            device=device,
-            torch_dtype=torch_dtype,
-            trust_remote_code=bool(args.trust_remote_code),
-            local_files_only=bool(args.local_files_only),
-            adapter_path=reference_adapter_path,
-        )
+        reference_model = None
+        if reference_rows_by_id is None:
+            reference_model = load_causal_lm_for_logprobs(
+                reference_model_path,
+                device=device,
+                torch_dtype=torch_dtype,
+                trust_remote_code=bool(args.trust_remote_code),
+                local_files_only=bool(args.local_files_only),
+                adapter_path=reference_adapter_path,
+            )
         for start in range(0, len(pending_rows), int(args.row_batch_size)):
             batch = pending_rows[start : start + int(args.row_batch_size)]
             generated_rows, batch_summary = build_preference_logprob_rows(
@@ -161,6 +180,7 @@ def main() -> None:
                 tokenizer=tokenizer,
                 policy_model=policy_model,
                 reference_model=reference_model,
+                reference_rows_by_id=reference_rows_by_id,
                 device=device,
                 batch_size=int(args.batch_size),
                 max_length=int(args.max_length),
@@ -217,6 +237,8 @@ def main() -> None:
         "tokenizer_path": tokenizer_path,
         "policy_adapter_path": policy_adapter_path,
         "reference_adapter_path": reference_adapter_path,
+        "reference_logprobs_path": str(reference_logprobs_path) if reference_logprobs_path else None,
+        "reference_cache_used": reference_rows_by_id is not None,
         "device": str(device),
         "torch_dtype": str(args.torch_dtype),
         "local_files_only": bool(args.local_files_only),
@@ -269,6 +291,18 @@ def _load_completed_rows(
             raise ValueError(f"resume logprob checkpoint contains duplicate sample id {sample_id!r}")
         completed_by_id[sample_id] = dict(row)
     return completed_by_id, resume_source
+
+
+def _load_reference_logprob_rows(path: Path, *, id_field: str) -> dict[str, dict[str, Any]]:
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    for row in read_jsonl(path):
+        sample_id = _row_id(row, id_field=id_field)
+        if sample_id in rows_by_id:
+            raise ValueError(f"reference cache contains duplicate sample id {sample_id!r}")
+        rows_by_id[sample_id] = dict(row)
+    if not rows_by_id:
+        raise ValueError("reference cache must not be empty")
+    return rows_by_id
 
 
 def _ordered_logprob_rows(

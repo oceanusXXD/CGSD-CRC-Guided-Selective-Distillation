@@ -70,6 +70,24 @@ class CausalCandidateScorerTest(unittest.TestCase):
         torch.testing.assert_close(torch.tensor(probabilities), torch.tensor(expected_probabilities))
         torch.testing.assert_close(torch.tensor(representations), hidden)
 
+    def test_single_token_candidates_use_peft_base_model_parts(self) -> None:
+        tokenizer = _TinyTokenizer()
+        base_model = _TinyCausalModel()
+        scorer = CausalCandidateScorer(
+            model=_TinyPeftWrapper(base_model), tokenizer=tokenizer, batch_size=2, max_length=16
+        )
+
+        probabilities = scorer.score_messages([[{"role": "user", "content": "a story"}]], ["A", "B"])
+
+        prompt_ids = torch.tensor([[3, 4]], dtype=torch.long)
+        hidden = base_model.model(
+            input_ids=prompt_ids, attention_mask=torch.ones_like(prompt_ids), return_dict=True
+        ).last_hidden_state[:, -1]
+        expected_scores = torch.nn.functional.linear(
+            hidden, base_model.lm_head.weight[[1, 2]], base_model.lm_head.bias[[1, 2]]
+        )
+        torch.testing.assert_close(torch.tensor(probabilities), torch.tensor([softmax_probabilities(expected_scores[0].tolist())]))
+
 
 class _TinyTokenizer:
     pad_token_id = 0
@@ -119,3 +137,19 @@ class _TinyCausalModel(torch.nn.Module):
 
     def forward(self, *args: object, **kwargs: object) -> None:
         raise AssertionError("single-token scoring should call the backbone directly")
+
+
+class _TinyPeftWrapper(torch.nn.Module):
+    def __init__(self, base_model: _TinyCausalModel) -> None:
+        super().__init__()
+        self._base_model = base_model
+        self.model = base_model
+
+    def get_base_model(self) -> _TinyCausalModel:
+        return self._base_model
+
+    def get_output_embeddings(self) -> torch.nn.Linear:
+        return self._base_model.get_output_embeddings()
+
+    def forward(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("single-token scoring should resolve the PEFT base model")

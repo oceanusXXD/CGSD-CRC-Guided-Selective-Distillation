@@ -110,6 +110,9 @@ def main() -> None:
     runtime_args = runtime_args_from_cli(args)
     set_seed(int(runtime_args.seed))
     configure_torch_performance(enable_tf32=runtime_args.tf32)
+    # Keep evaluation prompt construction identical to the binary training path.
+    run_config = vars(args)
+    run_config['input_format'] = 'chat_binary'
     selected_rows = read_jsonl(train_rows_path) if args.train_rows_path else load_selected_train_rows(output_dir)
     if not selected_rows:
         raise RuntimeError(f'{train_rows_path} is empty; pass --train_rows_path with canonical training JSONL rows')
@@ -132,7 +135,6 @@ def main() -> None:
         guide_examples = filter_examples_by_ids(all_examples, guide_ids)
         evaluation_source = str(input_artifact_path(args.split_ids_path, split_ids_path(output_dir)))
     device = get_device(args.device)
-    run_config = vars(args)
     run_config['seed'] = int(runtime_args.seed)
     model = train_round_model(train_examples=train_examples, eval_examples=guide_examples, tokenizer=tokenizer, model_path=model_path, init_adapter_path=init_adapter_path, output_dir=checkpoint_dir, device=device, args=runtime_args, round_index=args.round_index, run_config=run_config)
     model.to('cpu')
@@ -142,7 +144,7 @@ def main() -> None:
         key = str(row.get('selection_round', 'unknown'))
         selection_round_counts[key] = selection_round_counts.get(key, 0) + 1
     write_json(label_snapshot, train_label_snapshot_path)
-    write_json({'round_index': int(args.round_index), 'model_round_index': int(args.round_index), 'checkpoint_dir': str(checkpoint_dir), 'training_rows_path': str(training_rows_used_path), 'train_size': len(selected_rows), 'eval_size': len(guide_examples), 'evaluation_source': evaluation_source, 'train_label_snapshot_size': len(label_snapshot), 'selection_round_counts': selection_round_counts, 'source_selection_rounds': sorted(selection_round_counts), 'training_mode': 'lora_sft_from_base_model', 'init_adapter_path': str(init_adapter_path) if init_adapter_path is not None else None}, training_summary_path)
+    write_json({'round_index': int(args.round_index), 'model_round_index': int(args.round_index), 'checkpoint_dir': str(checkpoint_dir), 'training_rows_path': str(training_rows_used_path), 'train_size': len(selected_rows), 'eval_size': len(guide_examples), 'evaluation_source': evaluation_source, 'train_label_snapshot_size': len(label_snapshot), 'selection_round_counts': selection_round_counts, 'source_selection_rounds': sorted(selection_round_counts), 'training_mode': 'lora_sft_from_base_model', 'input_format': run_config['input_format'], 'init_adapter_path': str(init_adapter_path) if init_adapter_path is not None else None}, training_summary_path)
     teacher_usage = summarize_teacher_label_usage(selected_rows, purpose='training_label_reuse')
     train_steps = int(math.ceil(len(selected_rows) / max(int(runtime_args.batch_size), 1)) * int(runtime_args.epochs))
     write_stage_usage(usage_path, {'stage_name': 'train_round', 'round_index': int(args.round_index), 'cache': cache_decision.to_dict(), 'student_model_calls': 0, 'student_model_train_steps_estimated': train_steps, 'student_model_train_examples': int(len(selected_rows) * int(runtime_args.epochs)), 'estimated_student_train_tokens': int(estimate_query_document_prompt_tokens(selected_rows) * int(runtime_args.epochs)), 'teacher_label_usage': teacher_usage, 'groundtruth_substitute_calls': teacher_usage['groundtruth_substitute_calls'], 'teacher_api_file_calls': teacher_usage['teacher_api_file_calls'], 'checkpoint_dir': str(checkpoint_dir)})

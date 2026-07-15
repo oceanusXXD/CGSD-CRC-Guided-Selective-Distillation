@@ -1,6 +1,6 @@
 {
-  "schema_version": "binary-qwen06b-t4-gate-v1",
-  "purpose": "End-to-end binary protocol and GPU feasibility gate; not paper-result scale.",
+  "schema_version": "binary-local-query-t4-gate-v1",
+  "purpose": "End-to-end MIAS binary feasibility gate for local single-query sources; not a historical-result recovery or official-split benchmark.",
   "task_isolation": {
     "run_root": "experiments/runs/binary_qwen06b_t4_v1",
     "report_root": "experiments/reports/binary_qwen06b_t4_v1",
@@ -39,35 +39,39 @@
     ],
     "active_label_budget": 128
   },
+  "data_contract": {
+    "source_kind": "local_single_query_jsonl",
+    "test_split_origin": "deterministic_document_disjoint_source_holdout",
+    "forbidden_selector_fields": [
+      "groundtruth",
+      "label",
+      "parsed_answer",
+      "parsed_confidence"
+    ]
+  },
   "datasets": {
-    "imdb": {
-      "source_root": "experiments/inputs/binary/imdb",
-      "train_row_limit": 2048,
+    "codebase_q2": {
+      "source_root": "experiments/inputs/binary/codebase_q2",
+      "source_train_rows": 8047,
+      "source_test_rows": 1000,
       "seed_label_count": 128,
       "active_pool_size": 512,
       "development_size": 512,
-      "official_test_row_limit": 1000
+      "fixed_test_size": 1000
     },
-    "paws_labeled_final": {
-      "source_root": "experiments/inputs/binary/paws_labeled_final",
-      "train_row_limit": 2048,
+    "twitter_hate_q1": {
+      "source_root": "experiments/inputs/binary/twitter_hate_q1",
+      "source_train_rows": 23782,
+      "source_test_rows": 1000,
       "seed_label_count": 128,
       "active_pool_size": 512,
       "development_size": 512,
-      "official_test_row_limit": 1000
-    },
-    "tweeteval_hate": {
-      "source_root": "experiments/inputs/binary/tweeteval_hate",
-      "train_row_limit": 2048,
-      "seed_label_count": 128,
-      "active_pool_size": 512,
-      "development_size": 512,
-      "official_test_row_limit": 1000
+      "fixed_test_size": 1000
     }
   },
   "evaluation_policy": {
     "checkpoint_metric": "development_f1",
     "selection_uses": "seed_checkpoint_scores_only",
-    "official_test": "evaluated_once per completed training run and never used for selection or checkpoint choice"
+    "fixed_test": "evaluated once per completed training run and never used for selection or checkpoint choice"
   }
 }

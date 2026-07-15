@@ -1,0 +1,266 @@
+{
+  "baseline_method": "Random",
+  "comparisons": [
+    {
+      "baseline_mean": 0.37595907928388744,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0,
+      "delta_ci_low": 0.0,
+      "delta_mean": 0.0,
+      "metric": "preference_accuracy",
+      "metric_group": "evaluation_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.37595907928388744,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 0.37335092042995827,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0,
+      "delta_ci_low": 0.0,
+      "delta_mean": 0.0,
+      "metric": "length_controlled_win_rate",
+      "metric_group": "evaluation_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.37335092042995827,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 0.354639175257732,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0,
+      "delta_ci_low": 0.0,
+      "delta_mean": 0.0,
+      "metric": "worst_group_preference_accuracy",
+      "metric_group": "evaluation_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.354639175257732,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 0.3759590792838875,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.0,
+      "delta_ci_low": 0.0,
+      "delta_mean": 0.0,
+      "metric": "aulc",
+      "metric_group": "evaluation_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.3759590792838875,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": -0.019286059357626055,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -0.1577544236731956,
+      "delta_ci_low": -0.1577544236731956,
+      "delta_mean": -0.1577544236731956,
+      "metric": "capability_regression",
+      "metric_group": "evaluation_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": -0.17704048303082165,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 0.06999999999999998,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -0.06539999999999996,
+      "delta_ci_low": -0.06539999999999996,
+      "delta_mean": -0.06539999999999996,
+      "metric": "acquisition_tv",
+      "metric_group": "selection_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.004600000000000021,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 1.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -0.004065530931202543,
+      "delta_ci_low": -0.004065530931202543,
+      "delta_mean": -0.004065530931202543,
+      "metric": "utility_retained",
+      "metric_group": "selection_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.9959344690687975,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 1.3255813953488373,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -0.30675794296398773,
+      "delta_ci_low": -0.30675794296398773,
+      "delta_mean": -0.30675794296398773,
+      "metric": "maximum_propensity_ratio",
+      "metric_group": "selection_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 1.0188234523848496,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 0.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 0.004599999999999993,
+      "delta_ci_low": 0.004599999999999993,
+      "delta_mean": 0.004599999999999993,
+      "metric": "max_constraint_violation",
+      "metric_group": "selection_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.004599999999999993,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 0.6778993815183639,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -0.014146219789981873,
+      "delta_ci_low": -0.014146219789981873,
+      "delta_mean": -0.014146219789981873,
+      "metric": "mean_train_loss",
+      "metric_group": "training_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 0.6637531617283821,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 103438.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -32447.0,
+      "delta_ci_low": -32447.0,
+      "delta_mean": -32447.0,
+      "metric": "processed_input_tokens",
+      "metric_group": "training_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 70991.0,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 0.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": 6.6,
+      "delta_ci_low": 6.6,
+      "delta_mean": 6.6,
+      "metric": "selector_compute_seconds",
+      "metric_group": "cost_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 6.6,
+      "treatment_method": "ActiveDPO+DCMS"
+    },
+    {
+      "baseline_mean": 48056.0,
+      "baseline_method": "Random",
+      "confidence": 0.95,
+      "delta_ci_high": -21960.0,
+      "delta_ci_low": -21960.0,
+      "delta_mean": -21960.0,
+      "metric": "train_tokens",
+      "metric_group": "cost_metrics",
+      "p_value": 1.0,
+      "paired_count": 1,
+      "paired_seeds": [
+        1
+      ],
+      "permutations": 1000,
+      "treatment_mean": 26096.0,
+      "treatment_method": "ActiveDPO+DCMS"
+    }
+  ],
+  "cost_metrics": [
+    "selector_compute_seconds",
+    "train_tokens"
+  ],
+  "evaluation_metrics": [
+    "preference_accuracy",
+    "length_controlled_win_rate",
+    "worst_group_preference_accuracy",
+    "aulc",
+    "capability_regression"
+  ],
+  "input_path": "experiments/reports/dpo_single_seed_20260715/run_records.jsonl",
+  "is_ready": true,
+  "issues": [],
+  "selection_metrics": [
+    "acquisition_tv",
+    "utility_retained",
+    "maximum_propensity_ratio",
+    "max_constraint_violation"
+  ],
+  "training_metrics": [
+    "mean_train_loss",
+    "processed_input_tokens"
+  ],
+  "treatment_methods": [
+    "ActiveDPO+DCMS"
+  ]
+}

@@ -78,6 +78,7 @@ class BinaryReauditTest(unittest.TestCase):
         entropy = results["entropy"]
         self.assertEqual(3, len(entropy["selected_ids"]))
         self.assertEqual(7, len(entropy["train_rows"]))
+        self.assertTrue(all(row["query"] and row["document"] for row in entropy["revealed_rows"]))
         self.assertEqual(3, entropy["cost_metrics"]["active_label_count"])
         self.assertEqual(7, entropy["cost_metrics"]["supervision_budget_total"])
         self.assertEqual(0.0, entropy["selection_metrics"]["total_absolute_prediction_error"])

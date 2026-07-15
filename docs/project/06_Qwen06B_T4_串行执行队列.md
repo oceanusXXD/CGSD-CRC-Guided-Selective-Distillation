@@ -58,9 +58,13 @@ length 2048. Any change creates a new task version rather than mutating `v1`.
 
 ### S1: Binary Classification
 
-Datasets run in this order: IMDb, PAWS `labeled_final`, TweetEval `hate`.
-Inputs remain in their official source splits under `experiments/inputs/binary/`.
-The final test split must never enter selection or hyperparameter decisions.
+The local-query gate runs `codebase_q2`, then `twitter_hate_q1`, before the
+native IMDb, PAWS `labeled_final`, and TweetEval `hate` sequence. The local
+sources use a deterministic document-disjoint source holdout rather than an
+official source test split. They are new benchmarks and must not be reported as
+recovered historical results. Native inputs remain in their official source
+splits under `experiments/inputs/binary/`. Every fixed test split must never
+enter selection or hyperparameter decisions.
 
 For each dataset, finish the full sequence before moving to the next dataset:
 
@@ -70,6 +74,11 @@ For each dataset, finish the full sequence before moving to the next dataset:
 3. Materialize Random, Entropy, and Margin selections at the frozen budget.
 4. Train and evaluate the five training seeds with isolated adapters.
 5. Produce selection, budget, and run-level audits.
+
+For binary next-token probabilities, Entropy and absolute probability Margin
+are monotonic transforms. When their selected IDs are identical, retain both
+selection records and train the shared selected set once; do not present the
+duplicate training run as independent evidence.
 
 **Exit artifact:** `binary_run_records.jsonl`, selection audit, fairness report,
 and a per-dataset decision report. Do not start S2 while any binary run is

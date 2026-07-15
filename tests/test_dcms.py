@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from mias_dcms.selection.dcms import (
+    SLSQP_REFINEMENT_MAX_SAMPLES,
     dcms_utility_coverage_frontier,
     rank_normalize_utilities,
     solve_dcms,
@@ -217,6 +218,21 @@ class DCMSTest(unittest.TestCase):
         self.assertGreaterEqual(result.robust_lower_moments["A"], 0.4)
         self.assertLessEqual(result.robust_upper_moments["A"], 0.6)
         self.assertLessEqual(result.max_constraint_violation, 0.1)
+
+    def test_very_large_pool_uses_lp_without_unbounded_entropy_refinement(self) -> None:
+        sample_count = SLSQP_REFINEMENT_MAX_SAMPLES + 1
+        result = solve_dcms(
+            sample_ids=[f"x{index}" for index in range(sample_count)],
+            utilities=[1.0 - index / sample_count for index in range(sample_count)],
+            group_membership=[{"A": 1.0, "B": 0.0} if index % 2 == 0 else {"A": 0.0, "B": 1.0} for index in range(sample_count)],
+            budget=100,
+            target_moments={"A": 0.5, "B": 0.5},
+            tolerance=0.05,
+            rounding_seed=7,
+        )
+
+        self.assertEqual("scalable_lp", result.solver_status)
+        self.assertEqual(100, len(result.selected_ids))
 
 
 if __name__ == "__main__":

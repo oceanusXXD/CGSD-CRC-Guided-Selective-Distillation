@@ -7,6 +7,7 @@ from typing import Mapping, Sequence
 
 
 EXACT_ENUMERATION_MAX_SAMPLES = 18
+SLSQP_REFINEMENT_MAX_SAMPLES = 1000
 
 
 @dataclass(frozen=True)
@@ -377,7 +378,7 @@ def _solve_dcms_scalable(
     tolerance: float,
     rounding_seed: int | None,
 ) -> DCMSResult:
-    """Solve the large-pool relaxation with LP + entropy refinement.
+    """Solve the large-pool relaxation with LP and bounded entropy refinement.
 
     Small pools retain the exact reference solver above for transparent unit
     tests. Real pools use a continuous robust relaxation and systematic
@@ -455,23 +456,25 @@ def _solve_dcms_scalable(
         entropy_gradient = np.log((1.0 - clipped) / clipped)
         return -utilities - entropy_weight * entropy_gradient
 
-    refined = minimize(
-        objective,
-        q,
-        jac=gradient,
-        method="SLSQP",
-        bounds=[(0.0, 1.0)] * sample_count,
-        constraints=[
-            {"type": "eq", "fun": lambda values: float(np.sum(values) - budget), "jac": lambda _values: equality[0]},
-            {
-                "type": "ineq",
-                "fun": lambda values: np.asarray(b_ub) - np.asarray(a_ub) @ values,
-                "jac": lambda _values: -np.asarray(a_ub),
-            },
-        ],
-        options={"maxiter": 200, "ftol": 1e-9},
-    )
-    if refined.success and np.all(np.isfinite(refined.x)):
+    refined = None
+    if sample_count <= SLSQP_REFINEMENT_MAX_SAMPLES:
+        refined = minimize(
+            objective,
+            q,
+            jac=gradient,
+            method="SLSQP",
+            bounds=[(0.0, 1.0)] * sample_count,
+            constraints=[
+                {"type": "eq", "fun": lambda values: float(np.sum(values) - budget), "jac": lambda _values: equality[0]},
+                {
+                    "type": "ineq",
+                    "fun": lambda values: np.asarray(b_ub) - np.asarray(a_ub) @ values,
+                    "jac": lambda _values: -np.asarray(a_ub),
+                },
+            ],
+            options={"maxiter": 200, "ftol": 1e-9},
+        )
+    if refined is not None and refined.success and np.all(np.isfinite(refined.x)):
         q = np.clip(np.asarray(refined.x, dtype=float), 0.0, 1.0)
 
     selected_indexes = _systematic_round(q, budget=budget, seed=rounding_seed)
@@ -518,7 +521,7 @@ def _solve_dcms_scalable(
         robust_upper_moments=upper_moments,
         utility_retained=selected_utility / top_utility if top_utility > 0.0 else 1.0,
         max_constraint_violation=_max_robust_violation(lower_moments, upper_moments, targets),
-        solver_status="scalable_slsqp" if refined.success else "scalable_lp",
+        solver_status="scalable_slsqp" if refined is not None and refined.success else "scalable_lp",
         rounding_seed=rounding_seed,
     )
 
@@ -563,38 +566,51 @@ def _repair_rounding(
         ranked = sorted(range(len(q)), key=lambda index: (-float(q[index]), -float(utilities[index]), index))
         selected = set(ranked[:budget])
 
-    def violation(indexes: set[int]) -> float:
-        chosen = sorted(indexes)
-        lower_moments = np.mean(lower[:, chosen], axis=1)
-        upper_moments = np.mean(upper[:, chosen], axis=1)
-        return float(
-            np.max(
-                np.maximum(
-                    0.0,
-                    np.maximum(upper_moments - targets, targets - lower_moments),
-                )
-            )
+    lower_sums = lower[:, sorted(selected)].sum(axis=1)
+    upper_sums = upper[:, sorted(selected)].sum(axis=1)
+
+    def violation_from_sums(lower_values: Any, upper_values: Any) -> Any:
+        return np.max(
+            np.maximum(
+                0.0,
+                np.maximum(upper_values / budget - targets, targets - lower_values / budget),
+            ),
+            axis=0,
         )
 
-    current_violation = violation(selected)
+    current_violation = float(violation_from_sums(lower_sums, upper_sums))
     if current_violation <= tolerance + 1e-9:
         return sorted(selected)
-    for _ in range(max(1, len(q) * min(budget, 64))):
-        best = None
+    selected_utility = float(utilities[list(selected)].sum())
+    # Each candidate swap has a closed-form group-moment update.  Vectorizing
+    # the incoming candidates keeps repair practical for a 5,000-row pool.
+    for _ in range(min(budget, 64)):
+        best_key: tuple[float, float, float, int, int] | None = None
+        best_sums: tuple[Any, Any] | None = None
         for outgoing in sorted(selected):
-            for incoming in range(len(q)):
-                if incoming in selected:
-                    continue
-                candidate = set(selected)
-                candidate.remove(outgoing)
-                candidate.add(incoming)
-                candidate_violation = violation(candidate)
-                candidate_key = (candidate_violation, -float(utilities[list(candidate)].sum()), -float(q[incoming]), incoming)
-                if best is None or candidate_key < best[0]:
-                    best = (candidate_key, candidate)
-        if best is None or best[0][0] >= current_violation - 1e-12:
+            candidate_lower_sums = lower_sums[:, None] - lower[:, outgoing, None] + lower
+            candidate_upper_sums = upper_sums[:, None] - upper[:, outgoing, None] + upper
+            candidate_violations = violation_from_sums(candidate_lower_sums, candidate_upper_sums)
+            candidate_violations[list(selected)] = np.inf
+            incoming = int(np.argmin(candidate_violations))
+            candidate_key = (
+                float(candidate_violations[incoming]),
+                -(selected_utility - float(utilities[outgoing]) + float(utilities[incoming])),
+                -float(q[incoming]),
+                incoming,
+                outgoing,
+            )
+            if best_key is None or candidate_key < best_key:
+                best_key = candidate_key
+                best_sums = (candidate_lower_sums[:, incoming], candidate_upper_sums[:, incoming])
+        if best_key is None or best_key[0] >= current_violation - 1e-12:
             break
-        current_violation, selected = best[0][0], best[1]
+        incoming, outgoing = best_key[3], best_key[4]
+        selected.remove(outgoing)
+        selected.add(incoming)
+        selected_utility += float(utilities[incoming]) - float(utilities[outgoing])
+        lower_sums, upper_sums = best_sums
+        current_violation = best_key[0]
         if current_violation <= tolerance + 1e-9:
             return sorted(selected)
     raise ValueError(

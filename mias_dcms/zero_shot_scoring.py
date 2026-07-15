@@ -251,10 +251,10 @@ class CausalCandidateScorer:
         collect_representations: bool,
     ) -> tuple[list[list[float]], list[list[float]]] | None:
         """Score one-token continuations from the final prompt state when supported."""
-        backbone = getattr(self.model, "model", None)
-        output_embeddings = getattr(self.model, "get_output_embeddings", lambda: None)()
-        if backbone is None or not callable(backbone) or output_embeddings is None:
+        model_parts = _single_token_model_parts(self.model)
+        if model_parts is None:
             return None
+        backbone, output_embeddings = model_parts
         if not hasattr(output_embeddings, "weight"):
             return None
 
@@ -373,6 +373,29 @@ class CausalCandidateScorer:
             for index, (_, _, prompt_length) in enumerate(batch)
         ]
         return score_values, representations
+
+
+def _single_token_model_parts(model: Any) -> tuple[Any, Any] | None:
+    """Find a backbone and output head while retaining an optional PEFT adapter."""
+    candidates = [model]
+    get_base_model = getattr(model, "get_base_model", None)
+    if callable(get_base_model):
+        candidates.append(get_base_model())
+    for root in candidates:
+        candidate = root
+        for _ in range(3):
+            backbone = getattr(candidate, "model", None)
+            output_embeddings = getattr(candidate, "get_output_embeddings", lambda: None)()
+            if not callable(backbone) or output_embeddings is None:
+                break
+            # PeftModel.model is commonly a complete CausalLM wrapper.  Its
+            # nested .model is the transformer that yields last_hidden_state.
+            nested_output_embeddings = getattr(backbone, "get_output_embeddings", lambda: None)()
+            if nested_output_embeddings is not None:
+                candidate = backbone
+                continue
+            return backbone, output_embeddings
+    return None
 
 
 def _model_input_device(model: Any) -> torch.device:

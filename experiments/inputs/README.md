@@ -35,6 +35,16 @@ benchmarks/
     qwen3_0.6b_*.jsonl
     qwen3_0.6b_*.summary.json
 binary/
+  codebase_q2/
+    source_train.jsonl
+    source_test.jsonl
+    source_manifest.json
+    protocol_manifest.json
+  twitter_hate_q1/
+    source_train.jsonl
+    source_test.jsonl
+    source_manifest.json
+    protocol_manifest.json
   imdb/
     train.jsonl
     test.jsonl
@@ -82,6 +92,11 @@ cover every `id` in `data.jsonl` when running `scripts/prepare.py`.
   `scripts/download_binary_benchmarks.py`. Each dataset directory contains the
   official split boundaries in the repository's `id/query/document/groundtruth`
   schema and a pinned-source manifest with output hashes and label counts.
+- Local single-query JSONL sources can be made into separate, non-legacy binary
+  benchmarks with `scripts/prepare_query_binary_benchmark.py`. The importer
+  removes prior parsed-answer fields, deduplicates exact documents before
+  splitting, and records a document-disjoint fixed holdout. These datasets do
+  not recreate historical aggregate results or use an official source split.
 - Current preference fixed-pool artifacts under `preference/helpsteer2_preference/`
   are generated from `benchmarks/helpsteer2_preference/train.jsonl` with seed
   `20260712`; they cover selector-safe active rows, oracle labels, A/B swaps,
