@@ -40,6 +40,7 @@ def main() -> None:
         active_size=int(args.active_size),
         test_size=int(args.test_size),
         id_field=str(args.id_field),
+        label_field=str(args.label_field),
     )
     prior = pool_class_prior(rows, label_field=str(args.label_field))
     output_dir = Path(args.output_dir)

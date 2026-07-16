@@ -7,7 +7,13 @@
     "split_manifest_path": "experiments/inputs/preference/split_manifest.json",
     "prompt_clusters_path": "experiments/inputs/preference/prompt_clusters.jsonl",
     "active_dpo_length_normalize": true,
-    "active_dpo_novelty_weight": 0.25
+    "active_dpo_novelty_weight": 0.25,
+    "mias_bootstrap_heads": 20,
+    "mias_kappa": 0.1,
+    "mias_pool_features_path": "experiments/inputs/preference/mias_pool_features.jsonl",
+    "mias_seed_features_path": "experiments/inputs/preference/mias_seed_features.jsonl",
+    "mias_seed_rows_path": "experiments/inputs/preference/initial_seed_reveal/revealed_rows.jsonl",
+    "mias_slack_grid": "0,0.01,0.02,0.05,0.1,0.2,0.5"
   },
   "datasets": [
     "helpsteer2",
@@ -26,11 +32,8 @@
   },
   "methods": [
     "Random",
-    "Reward Margin",
-    "APL",
-    "ActiveDPO",
-    "APL+DCMS",
-    "ActiveDPO+DCMS"
+    "MIAS",
+    "MIAS+DCMS"
   ],
   "models": [
     "qwen-0.6b"
@@ -55,6 +58,7 @@
     "model_name_or_path": "qwen-0.6b",
     "optimizer": "adamw",
     "prompt_format": "chatml_pairwise_v1",
+    "reference_adapter_path": "experiments/inputs/preference/initial_policy_adapter",
     "train_token_budget": 240000,
     "update_steps": 120
   }

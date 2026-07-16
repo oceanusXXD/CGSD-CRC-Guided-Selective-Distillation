@@ -31,7 +31,10 @@ class DPOExecutionStatusTest(unittest.TestCase):
         self.assertEqual("complete", report.runs[0]["stages"][1]["status"])
         self.assertEqual("blocked", report.runs[0]["stages"][2]["status"])
         self.assertEqual(
-            ["experiments/runs/dpo_main/helpsteer2/qwen-0.6b/budget_100/seed_1/Random/dpo_train_rows.jsonl"],
+            [
+                "experiments/runs/dpo_main/helpsteer2/qwen-0.6b/budget_100/seed_1/Random/dpo_train_rows.jsonl",
+                "experiments/runs/dpo_main/helpsteer2/qwen-0.6b/budget_100/seed_1/Random/selection_summary.json",
+            ],
             report.runs[0]["stages"][2]["present_inputs"],
         )
         self.assertEqual(

@@ -26,7 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input_path", required=True)
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--budget", type=int, required=True)
-    parser.add_argument("--target_moments", required=True)
+    parser.add_argument("--target_moments", default="pool")
+    parser.add_argument(
+        "--target_moments_path",
+        help="Optional JSON object of target moments derived from the full unlabeled pool.",
+    )
     parser.add_argument("--slack_grid", required=True)
     parser.add_argument("--kappa", type=float, required=True)
     parser.add_argument("--rounding_seed", type=int, default=None)
@@ -47,7 +51,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _parse_target_moments(value: str, *, rows: list[dict[str, Any]], group_field: str) -> dict[str, float]:
+def _parse_target_moments(
+    value: str,
+    *,
+    rows: list[dict[str, Any]],
+    group_field: str,
+    target_moments_path: Path | None = None,
+) -> dict[str, float]:
+    if target_moments_path is not None:
+        payload = json.loads(target_moments_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("target_moments_path must contain a JSON object")
+        return {str(key): float(item) for key, item in payload.items()}
     if str(value).strip().lower() == "pool":
         memberships = _group_membership(rows, group_field)
         groups = sorted({group for membership in memberships for group in membership})
@@ -105,6 +120,7 @@ def main() -> None:
             str(args.target_moments),
             rows=rows,
             group_field=str(args.group_field),
+            target_moments_path=args.target_moments_path,
         ),
         slack_grid=_parse_slack_grid(str(args.slack_grid)),
         kappa=float(args.kappa),
@@ -132,6 +148,7 @@ def main() -> None:
             "utility": utility,
             "q_propensity": float(result.q_propensity.get(sample_id, 0.0)),
             "selected": int(result.selection_indicator.get(sample_id, 0)),
+            **_gradient_dpo_audit_fields(row),
             **_audit_group_values(rows[index], audit_group_fields),
         }
         for index, row in enumerate(rows)
@@ -148,6 +165,9 @@ def main() -> None:
         "budget": int(args.budget),
         "pool_size": len(rows),
         "selection_candidate_count": len(candidate_rows),
+        "target_moments_source": (
+            str(args.target_moments_path) if args.target_moments_path is not None else str(args.target_moments)
+        ),
         "selection_group_field": selection_group_field or None,
         "excluded_same_group_candidate_count": len(excluded_candidate_ids),
         "selected_count": len(result.selected_ids),
@@ -194,6 +214,14 @@ def _audit_group_values(row: dict[str, Any], fields: tuple[str, ...]) -> dict[st
         field: str(materialized[field])
         for field in fields
         if field in materialized and materialized[field] is not None
+    }
+
+
+def _gradient_dpo_audit_fields(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): value
+        for key, value in row.items()
+        if str(key).startswith("gradient_dpo_") and value is not None
     }
 
 

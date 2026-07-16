@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from mias_dcms.preference_logprob_audit import audit_preference_logprobs
+from mias_dcms.selection.features import merge_feature_rows
 from mias_dcms.selectors import FORBIDDEN_SELECTOR_INPUT_FIELDS
 
 
@@ -15,9 +16,15 @@ class PreferenceExperimentPreflightInputs:
     logprob_rows: Iterable[Mapping[str, Any]]
     split_manifest: Mapping[str, Any]
     run_matrix: Iterable[Mapping[str, Any]]
+    mias_seed_rows: Iterable[Mapping[str, Any]] | None = None
+    mias_seed_features: Iterable[Mapping[str, Any]] | None = None
+    mias_pool_features: Iterable[Mapping[str, Any]] | None = None
     expected_active_pool_path: str | None = None
     expected_oracle_store_path: str | None = None
     expected_logprobs_path: str | None = None
+    expected_mias_seed_rows_path: str | None = None
+    expected_mias_seed_features_path: str | None = None
+    expected_mias_pool_features_path: str | None = None
     expected_methods: Sequence[str] = ()
     expected_seeds: Sequence[int] = ()
     id_field: str = "sample_id"
@@ -59,6 +66,21 @@ def audit_preference_experiment_preflight(
     oracle_store = {str(sample_id): dict(row) for sample_id, row in inputs.oracle_store.items()}
     logprob_rows = [dict(row) for row in inputs.logprob_rows]
     run_rows = [dict(row) for row in inputs.run_matrix]
+    mias_seed_rows = (
+        [dict(row) for row in inputs.mias_seed_rows]
+        if inputs.mias_seed_rows is not None
+        else None
+    )
+    mias_seed_features = (
+        [dict(row) for row in inputs.mias_seed_features]
+        if inputs.mias_seed_features is not None
+        else None
+    )
+    mias_pool_features = (
+        [dict(row) for row in inputs.mias_pool_features]
+        if inputs.mias_pool_features is not None
+        else None
+    )
     issues: list[dict[str, Any]] = []
 
     active_ids = _ids_from_rows(active_rows, id_field=inputs.id_field, issue_code="active_pool_missing_id", issues=issues)
@@ -78,6 +100,15 @@ def audit_preference_experiment_preflight(
         issues=issues,
     )
     _audit_split_manifest(inputs.split_manifest, active_ids=active_ids, issues=issues)
+    _audit_mias_inputs(
+        active_rows=active_rows,
+        run_rows=run_rows,
+        expected_methods=inputs.expected_methods,
+        seed_rows=mias_seed_rows,
+        seed_features=mias_seed_features,
+        pool_features=mias_pool_features,
+        issues=issues,
+    )
     _audit_run_matrix(
         run_rows,
         expected_methods=inputs.expected_methods,
@@ -85,6 +116,9 @@ def audit_preference_experiment_preflight(
         expected_active_pool_path=inputs.expected_active_pool_path,
         expected_oracle_store_path=inputs.expected_oracle_store_path,
         expected_logprobs_path=inputs.expected_logprobs_path,
+        expected_mias_seed_rows_path=inputs.expected_mias_seed_rows_path,
+        expected_mias_seed_features_path=inputs.expected_mias_seed_features_path,
+        expected_mias_pool_features_path=inputs.expected_mias_pool_features_path,
         issues=issues,
     )
 
@@ -186,6 +220,9 @@ def _audit_run_matrix(
     expected_active_pool_path: str | None,
     expected_oracle_store_path: str | None,
     expected_logprobs_path: str | None,
+    expected_mias_seed_rows_path: str | None,
+    expected_mias_seed_features_path: str | None,
+    expected_mias_pool_features_path: str | None,
     issues: list[dict[str, Any]],
 ) -> None:
     covered_methods = {str(row.get("method")) for row in run_rows}
@@ -202,6 +239,9 @@ def _audit_run_matrix(
         "active_pool_path": expected_active_pool_path,
         "oracle_store_path": expected_oracle_store_path,
         "logprobs_path": expected_logprobs_path,
+        "mias_seed_rows_path": expected_mias_seed_rows_path,
+        "mias_seed_features_path": expected_mias_seed_features_path,
+        "mias_pool_features_path": expected_mias_pool_features_path,
     }
     for row_index, row in enumerate(run_rows):
         artifacts = row.get("artifacts")
@@ -212,7 +252,15 @@ def _audit_run_matrix(
             if expected_path is None:
                 continue
             data_config_path = str(data_config.get(field_name) or "")
-            if data_config_path and data_config_path != str(expected_path):
+            if not data_config_path:
+                issues.append(
+                    {
+                        "code": f"run_matrix_{field_name}_missing",
+                        "row_index": row_index,
+                        "source": "data_config",
+                    }
+                )
+            elif data_config_path != str(expected_path):
                 issues.append(
                     {
                         "code": f"run_matrix_{field_name}_mismatch",
@@ -222,6 +270,103 @@ def _audit_run_matrix(
                         "actual": data_config_path,
                     }
                 )
+
+
+def _audit_mias_inputs(
+    *,
+    active_rows: Sequence[Mapping[str, Any]],
+    run_rows: Sequence[Mapping[str, Any]],
+    expected_methods: Sequence[str],
+    seed_rows: Sequence[Mapping[str, Any]] | None,
+    seed_features: Sequence[Mapping[str, Any]] | None,
+    pool_features: Sequence[Mapping[str, Any]] | None,
+    issues: list[dict[str, Any]],
+) -> None:
+    methods = [*expected_methods, *(row.get("method") for row in run_rows)]
+    if not any(_is_mias_method(method) for method in methods):
+        return
+
+    required = {
+        "mias_seed_rows_missing": seed_rows,
+        "mias_seed_features_missing": seed_features,
+        "mias_pool_features_missing": pool_features,
+    }
+    for code, rows in required.items():
+        if rows is None:
+            issues.append({"code": code})
+
+    if seed_rows is not None and seed_features is not None:
+        _audit_feature_coverage(
+            seed_rows,
+            seed_features,
+            source_name="mias_seed_features",
+            issue_code="mias_seed_features_invalid",
+            issues=issues,
+        )
+    if seed_rows is not None:
+        _audit_dpo_mias_seed_sufficiency(seed_rows, issues=issues)
+    if pool_features is not None:
+        _audit_feature_coverage(
+            active_rows,
+            pool_features,
+            source_name="mias_pool_features",
+            issue_code="mias_pool_features_invalid",
+            issues=issues,
+        )
+
+
+def _audit_feature_coverage(
+    rows: Sequence[Mapping[str, Any]],
+    feature_rows: Sequence[Mapping[str, Any]],
+    *,
+    source_name: str,
+    issue_code: str,
+    issues: list[dict[str, Any]],
+) -> None:
+    try:
+        merge_feature_rows(rows, feature_rows, source_name=source_name)
+    except ValueError as exc:
+        issues.append({"code": issue_code, "message": str(exc)})
+
+
+def _audit_dpo_mias_seed_sufficiency(
+    seed_rows: Sequence[Mapping[str, Any]],
+    *,
+    issues: list[dict[str, Any]],
+) -> None:
+    """Require enough revealed non-tie pairs for split/calibration/bootstrap checks."""
+    labels = [label for row in seed_rows if (label := _dpo_seed_label(row)) is not None]
+    minimum_non_tie = 20
+    if len(labels) < minimum_non_tie:
+        issues.append(
+            {
+                "code": "mias_dpo_seed_insufficient",
+                "non_tie_seed_count": len(labels),
+                "minimum_non_tie_seed_count": minimum_non_tie,
+            }
+        )
+    if len(set(labels)) < 2:
+        issues.append(
+            {
+                "code": "mias_dpo_seed_missing_direction",
+                "observed_labels": sorted(set(labels)),
+            }
+        )
+
+
+def _dpo_seed_label(row: Mapping[str, Any]) -> str | None:
+    value = row.get("preferred_response", row.get("oracle_label"))
+    normalized = str(value or "").strip().upper()
+    if normalized in {"1", "A"}:
+        return "A"
+    if normalized in {"2", "B"}:
+        return "B"
+    return None
+
+
+def _is_mias_method(value: Any) -> bool:
+    normalized = str(value or "").strip().lower().replace("+", "_").replace("-", "_")
+    return normalized in {"mias", "mias_dcms"}
 
 
 def _ids_from_rows(

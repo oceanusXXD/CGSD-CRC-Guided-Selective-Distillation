@@ -56,6 +56,16 @@ def main() -> None:
         evaluation_label_count=int(cost_report.get("evaluation_label_count", 0)),
         judge_calls=int(cost_report.get("judge_calls", 0)),
         selector_compute_seconds=float(cost_report.get("selector_compute_seconds", 0.0)),
+        train_tokens=(
+            int(cost_report["train_tokens"])
+            if cost_report.get("train_tokens") is not None
+            else None
+        ),
+        oracle_label_calls=(
+            int(cost_report["oracle_label_calls"])
+            if cost_report.get("oracle_label_calls") is not None
+            else None
+        ),
     )
     payload = {**record.as_dict(), "run_status": "completed"}
     write_json(payload, args.output_path)

@@ -10,6 +10,26 @@ from mias_dcms.multiclass_protocol import (
 
 
 class MulticlassProtocolTest(unittest.TestCase):
+    def test_seed_split_covers_every_class_when_capacity_allows(self) -> None:
+        rows = [
+            {"id": f"s{index}", "label": index % 4}
+            for index in range(40)
+        ]
+
+        splits = build_fixed_multiclass_splits(
+            rows,
+            seed=9,
+            seed_size=4,
+            active_size=20,
+            test_size=8,
+        )
+
+        labels_by_id = {row["id"]: row["label"] for row in rows}
+        self.assertEqual(
+            {0, 1, 2, 3},
+            {labels_by_id[sample_id] for sample_id in splits["seed_ids"]},
+        )
+
     def test_pool_class_prior_reports_counts_and_shares(self) -> None:
         rows = [
             {"id": "a", "label": "World"},

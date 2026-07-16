@@ -11,6 +11,7 @@ DPO_EXECUTION_STAGES = ("selection", "reveal", "training", "evaluation", "summar
 DCMS_AUDIT_GROUP_FIELDS = (
     "length_gap_bin,source_pair,prompt_cluster,ab_position,length_by_prompt_cluster"
 )
+GRADIENT_DPO_GROUP_FIELDS = "prompt_cluster,length_gap_bin"
 
 REQUIRED_DPO_EXECUTION_ARTIFACTS = (
     "active_pool_path",
@@ -174,6 +175,7 @@ def _stages_for_run(
                 method=method,
                 artifacts=artifacts,
                 data_config=data_config,
+                training_config=dict(row.get("training_config") or {}),
             ),
             "outputs": {
                 "selected_ids_path": str(artifacts.get("selected_ids_path")),
@@ -186,6 +188,7 @@ def _stages_for_run(
                 run_dir=run_dir,
                 artifacts=artifacts,
                 data_config=data_config,
+                training_config=dict(row.get("training_config") or {}),
             ),
         },
         {
@@ -230,6 +233,7 @@ def _stages_for_run(
             "blocker": "awaiting_reveal",
             "inputs": {
                 "dpo_train_rows_path": str(artifacts.get("dpo_train_rows_path")),
+                "selection_summary_path": str(artifacts.get("selection_summary_path")),
             },
             "outputs": {
                 "policy_adapter_path": str(artifacts.get("policy_adapter_path")),
@@ -290,6 +294,7 @@ def _selection_inputs(
     method: str,
     artifacts: Mapping[str, Any],
     data_config: Mapping[str, Any],
+    training_config: Mapping[str, Any],
 ) -> dict[str, str]:
     """Declare every file consumed by the generated selection command.
 
@@ -306,6 +311,19 @@ def _selection_inputs(
     prompt_clusters_path = str(data_config.get("prompt_clusters_path") or "").strip()
     if prompt_clusters_path:
         inputs["prompt_clusters_path"] = prompt_clusters_path
+    normalized_method = _normalize_method_for_command(method)
+    if normalized_method in {"gradient_dpo", "gradient_dpo_dcms"}:
+        adapter_path = str(training_config.get("initial_policy_adapter_path") or "")
+        if adapter_path:
+            inputs["initial_policy_adapter_path"] = adapter_path
+    if normalized_method in {"mias", "mias_dcms"}:
+        inputs.update(
+            {
+                "mias_seed_rows_path": str(data_config.get("mias_seed_rows_path") or ""),
+                "mias_seed_features_path": str(data_config.get("mias_seed_features_path") or ""),
+                "mias_pool_features_path": str(data_config.get("mias_pool_features_path") or ""),
+            }
+        )
     return inputs
 
 
@@ -317,6 +335,7 @@ def _selection_commands(
     run_dir: PurePosixPath,
     artifacts: Mapping[str, Any],
     data_config: Mapping[str, Any],
+    training_config: Mapping[str, Any],
 ) -> list[str]:
     active_pool_path = str(data_config.get("active_pool_path") or artifacts.get("active_pool_path"))
     logprobs_path = str(data_config.get("logprobs_path") or artifacts.get("logprobs_path"))
@@ -340,6 +359,42 @@ def _selection_commands(
             command_parts.extend(["--metadata_path", _quote(str(prompt_clusters_path))])
         if selection_group_field:
             command_parts.extend(["--selection_group_field", _quote(selection_group_field)])
+        return [" ".join(command_parts)]
+
+    if normalized in {"mias", "mias_dcms"}:
+        command_parts = [
+            "python",
+            "scripts/select_mias.py",
+            "--task",
+            "preference",
+            "--seed_rows_path",
+            _quote(str(data_config.get("mias_seed_rows_path") or "")),
+            "--candidate_rows_path",
+            _quote(active_pool_path),
+            "--seed_feature_path",
+            _quote(str(data_config.get("mias_seed_features_path") or "")),
+            "--candidate_feature_path",
+            _quote(str(data_config.get("mias_pool_features_path") or "")),
+            "--output_dir",
+            _quote(str(run_dir)),
+            "--budget",
+            str(int(budget)),
+            "--seed",
+            str(int(seed)),
+            "--bootstrap_heads",
+            str(int(data_config.get("mias_bootstrap_heads", 20))),
+            "--slack_grid",
+            _quote(str(data_config.get("mias_slack_grid", "0,0.01,0.02,0.05,0.1,0.2,0.5"))),
+            "--kappa",
+            str(float(data_config.get("mias_kappa", 0.1))),
+        ]
+        if logprobs_path:
+            command_parts.extend(["--metadata_path", _quote(logprobs_path)])
+        prompt_clusters_path = str(data_config.get("prompt_clusters_path") or "")
+        if prompt_clusters_path:
+            command_parts.extend(["--metadata_path", _quote(prompt_clusters_path)])
+        if normalized == "mias_dcms":
+            command_parts.append("--dcms")
         return [" ".join(command_parts)]
 
     if normalized in {"reward_margin", "apl", "active_dpo"}:
@@ -368,6 +423,84 @@ def _selection_commands(
             score_command,
             " ".join(select_command),
         ]
+
+    if normalized in {"gradient_dpo", "gradient_dpo_dcms"}:
+        scored_path = str(run_dir / "baseline_scores.jsonl")
+        gradient_path = str(run_dir / "gradient_scores.jsonl")
+        target_moments_path = str(run_dir / "gradient_target_moments.json")
+        score_command = _score_preference_command(
+            input_path=logprobs_path,
+            output_path=scored_path,
+            method="gradient_dpo",
+            data_config=data_config,
+        )
+        gradient_command = _gradient_dpo_score_command(
+            input_path=scored_path,
+            output_path=gradient_path,
+            target_moments_path=target_moments_path,
+            budget=budget,
+            row=data_config,
+            training_config=training_config,
+        )
+        if not gradient_command:
+            raise ValueError("GradientDPO requires a shared initial policy adapter")
+        if normalized == "gradient_dpo":
+            select_command = [
+                "python",
+                "scripts/select_preference_baseline.py",
+                "--input_path",
+                _quote(gradient_path),
+                "--output_dir",
+                _quote(str(run_dir)),
+                "--method",
+                "gradient_dpo",
+                "--budget",
+                str(int(budget)),
+            ]
+            if selection_group_field:
+                select_command.extend(["--selection_group_field", _quote(selection_group_field)])
+            return [score_command, gradient_command, " ".join(select_command)]
+
+        dcms_candidates_path = str(run_dir / "dcms_candidates.jsonl")
+        prepare_command = [
+            "python",
+            "scripts/prepare_preference_dcms_inputs.py",
+            "--input_path",
+            _quote(gradient_path),
+            "--output_path",
+            _quote(dcms_candidates_path),
+            "--method",
+            "gradient_dpo",
+            "--group_fields",
+            GRADIENT_DPO_GROUP_FIELDS,
+            "--audit_group_fields",
+            GRADIENT_DPO_GROUP_FIELDS,
+        ]
+        dcms_command = [
+            "python",
+            "scripts/select_dcms.py",
+            "--input_path",
+            _quote(dcms_candidates_path),
+            "--output_dir",
+            _quote(str(run_dir)),
+            "--budget",
+            str(int(budget)),
+            "--target_moments_path",
+            _quote(target_moments_path),
+            "--slack_grid",
+            "0,0.01,0.02,0.05,0.1,0.2,0.5",
+            "--kappa",
+            str(float(data_config.get("gradient_dpo_kappa", 0.1))),
+            "--rounding_seed",
+            str(int(seed)),
+            "--use_rank_normalization",
+            "--audit_group_fields",
+            GRADIENT_DPO_GROUP_FIELDS,
+        ]
+        if selection_group_field:
+            prepare_command.extend(["--selection_group_field", _quote(selection_group_field)])
+            dcms_command.extend(["--selection_group_field", _quote(selection_group_field)])
+        return [score_command, gradient_command, " ".join(prepare_command), " ".join(dcms_command)]
 
     if normalized in {"apl_dcms", "active_dpo_dcms"}:
         base_method = "apl" if normalized == "apl_dcms" else "active_dpo"
@@ -460,6 +593,55 @@ def _score_preference_command(
     return " ".join(parts)
 
 
+def _gradient_dpo_score_command(
+    *,
+    input_path: str,
+    output_path: str,
+    target_moments_path: str,
+    budget: int,
+    row: Mapping[str, Any],
+    training_config: Mapping[str, Any],
+) -> str:
+    model_name = str(training_config.get("model_name_or_path") or "")
+    adapter_path = str(training_config.get("initial_policy_adapter_path") or "")
+    if not model_name or not adapter_path:
+        return ""
+    parts = [
+        "python",
+        "scripts/score_preference_gradients.py",
+        "--input_path",
+        _quote(input_path),
+        "--output_path",
+        _quote(output_path),
+        "--target_moments_path",
+        _quote(target_moments_path),
+        "--model_name_or_path",
+        _quote(model_name),
+        "--policy_adapter_path",
+        _quote(adapter_path),
+        "--budget",
+        str(int(budget)),
+        "--candidate_multiplier",
+        str(int(row.get("gradient_dpo_candidate_multiplier", 4))),
+        "--beta",
+        str(float(training_config.get("beta", 0.1))),
+        "--max_length",
+        str(int(training_config.get("max_length", 2048))),
+        "--prompt_format",
+        _quote(str(training_config.get("prompt_format", "chatml_pairwise_v1"))),
+        "--torch_dtype",
+        _quote(str(training_config.get("dtype", "auto"))),
+        "--group_fields",
+        GRADIENT_DPO_GROUP_FIELDS,
+    ]
+    device = str(row.get("gradient_dpo_selector_device", "")).strip()
+    if device:
+        parts.extend(["--device", _quote(device)])
+    if not _as_bool(row.get("gradient_dpo_gradient_checkpointing", True)):
+        parts.append("--no_gradient_checkpointing")
+    return " ".join(parts)
+
+
 def _training_commands(
     *,
     method: str,
@@ -476,6 +658,8 @@ def _training_commands(
         "scripts/train_preference_dpo_run.py",
         "--dpo_train_rows_path",
         _quote(str(artifacts.get("dpo_train_rows_path"))),
+        "--selection_summary_path",
+        _quote(str(artifacts.get("selection_summary_path"))),
         "--output_dir",
         _quote(str(run_dir / "policy_adapter")),
         "--training_summary_path",
@@ -566,7 +750,11 @@ def _evaluation_commands(*, artifacts: Mapping[str, Any], row: Mapping[str, Any]
             )
         model_name = str(training_config.get("model_name_or_path") or row.get("model") or "")
         policy_adapter_path = str(artifacts.get("policy_adapter_path") or "")
-        reference_adapter_path = str(training_config.get("initial_policy_adapter_path") or "")
+        reference_adapter_path = str(
+            training_config.get("reference_adapter_path")
+            or training_config.get("initial_policy_adapter_path")
+            or ""
+        )
         if not model_name or not policy_adapter_path or not reference_adapter_path:
             raise ValueError(
                 "formal held-out DPO evaluation requires model_name_or_path, policy_adapter_path, "
@@ -727,9 +915,15 @@ def _normalize_method_for_command(method: str) -> str:
         "apl": "apl",
         "active_dpo": "active_dpo",
         "activedpo": "active_dpo",
+        "gradient_dpo": "gradient_dpo",
+        "gradientdpo": "gradient_dpo",
         "apl_dcms": "apl_dcms",
         "active_dpo_dcms": "active_dpo_dcms",
         "activedpo_dcms": "active_dpo_dcms",
+        "gradient_dpo_dcms": "gradient_dpo_dcms",
+        "gradientdpo_dcms": "gradient_dpo_dcms",
+        "mias": "mias",
+        "mias_dcms": "mias_dcms",
     }
     return aliases.get(key, key)
 

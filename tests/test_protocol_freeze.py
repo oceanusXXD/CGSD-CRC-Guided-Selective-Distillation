@@ -23,8 +23,12 @@ class ProtocolFreezeTest(unittest.TestCase):
     def test_freeze_protocol_declares_baselines_metrics_and_budget_rules(self) -> None:
         protocol = json.loads(FREEZE_PATH.read_text(encoding="utf-8"))
 
-        self.assertIn("Random", protocol["baselines"]["preference"])
-        self.assertIn("ActiveDPO+DCMS", protocol["baselines"]["preference"])
+        self.assertEqual(
+            ["Random", "MIAS", "MIAS+DCMS"],
+            protocol["baselines"]["preference"],
+        )
+        self.assertIn("ActiveDPO+DCMS", protocol["baselines"]["preference_ablations"])
+        self.assertEqual(0.1, protocol["dcms"]["main_kappa"])
         self.assertIn("BADGE+DCMS", protocol["baselines"]["multiclass"])
         self.assertIn("acquisition_tv", protocol["metrics"]["selection"])
         self.assertIn("maximum_propensity_ratio", protocol["metrics"]["selection"])

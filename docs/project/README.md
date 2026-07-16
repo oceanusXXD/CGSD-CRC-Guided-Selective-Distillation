@@ -18,17 +18,15 @@ This directory contains the planning and acceptance documents for the MIAS/DCMS 
 - `tests/`: tests for the active code tree.
 - `docs/project/`: MIAS/DCMS planning and acceptance documents.
 - `docs/paper/`: active paper draft materials.
-- `docs/archive/`: old paper drafts and superseded narratives.
 - `experiments/inputs/`: durable input surfaces such as source data, split ids, embeddings, and reusable caches.
 - `experiments/runs/`: local or compact run outputs.
 - `experiments/reports/`: compact reports and provenance.
-- `experiments/reports/binary_legacy/`: archived binary-task tables and figures.
 - `resources/`: supporting non-code resources.
 
 ## Boundary Rules
 
 - Active code may depend only on `mias_dcms/` and `scripts/`; superseded package trees are not part of the active import surface.
-- Legacy binary evidence stays under `experiments/reports/binary_legacy/`.
+- Retained binary evidence is limited to the current frozen gate summaries.
 - Hidden-label, oracle-label, selector-score, and evaluator-score artifacts should remain separated when new experiment outputs are added.
 - Gate evidence should point to real compact artifacts; checkpoint evidence is registered through `scripts/register_initial_policy_checkpoint.py` only after required files exist.
 - Generated caches, checkpoints, model weights, and large local run outputs remain ignored unless they are compact reproducibility artifacts.

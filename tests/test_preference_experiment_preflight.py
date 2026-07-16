@@ -83,6 +83,64 @@ class PreferenceExperimentPreflightTest(unittest.TestCase):
         self.assertIn("split_overlap", codes)
         self.assertIn("run_matrix_active_pool_path_mismatch", codes)
 
+    def test_mias_preflight_requires_label_safe_exact_feature_artifacts(self) -> None:
+        report = audit_preference_experiment_preflight(
+            PreferenceExperimentPreflightInputs(
+                active_pool=_active_pool(),
+                oracle_store=_oracle_store(),
+                logprob_rows=_logprob_rows(),
+                split_manifest=_split_manifest(),
+                run_matrix=_run_matrix(),
+                expected_methods=["MIAS"],
+                mias_seed_rows=[
+                    {"sample_id": "s1", "preferred_response": 1},
+                    {"sample_id": "s2", "preferred_response": 2},
+                ],
+                mias_seed_features=[
+                    {"sample_id": "s1", "response_a_embedding": [1.0]},
+                ],
+                mias_pool_features=[
+                    {"sample_id": "p1", "response_a_embedding": [1.0]},
+                    {
+                        "sample_id": "p2",
+                        "response_a_embedding": [2.0],
+                        "oracle_label": "A",
+                    },
+                ],
+            )
+        )
+
+        codes = {issue["code"] for issue in report.issues}
+        self.assertIn("mias_seed_features_invalid", codes)
+        self.assertIn("mias_pool_features_invalid", codes)
+        self.assertIn("mias_dpo_seed_insufficient", codes)
+
+    def test_mias_preflight_rejects_a_seed_without_both_preference_directions(self) -> None:
+        report = audit_preference_experiment_preflight(
+            PreferenceExperimentPreflightInputs(
+                active_pool=_active_pool(),
+                oracle_store=_oracle_store(),
+                logprob_rows=_logprob_rows(),
+                split_manifest=_split_manifest(),
+                run_matrix=_run_matrix(),
+                expected_methods=["MIAS"],
+                mias_seed_rows=[
+                    {"sample_id": f"s{index}", "preferred_response": 1}
+                    for index in range(20)
+                ],
+                mias_seed_features=[
+                    {"sample_id": f"s{index}", "response_a_embedding": [float(index)]}
+                    for index in range(20)
+                ],
+                mias_pool_features=[
+                    {"sample_id": "p1", "response_a_embedding": [1.0]},
+                    {"sample_id": "p2", "response_a_embedding": [2.0]},
+                ],
+            )
+        )
+
+        self.assertIn("mias_dpo_seed_missing_direction", {issue["code"] for issue in report.issues})
+
 
 def _active_pool() -> list[dict[str, object]]:
     return [

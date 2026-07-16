@@ -72,6 +72,33 @@ class SamplingDiagnosticsTest(unittest.TestCase):
                 seed=1,
             )
 
+    def test_entropy_gradient_dcms_uses_top_four_budget_pool_and_semantic_coverage(self) -> None:
+        rows = [
+            {"id": "a", "probabilities": [0.5, 0.5], "representation_embedding": [3.0, 0.0]},
+            {"id": "b", "probabilities": [0.6, 0.4], "representation_embedding": [0.0, 3.0]},
+            {"id": "c", "probabilities": [0.4, 0.6], "representation_embedding": [-3.0, 0.0]},
+            {"id": "d", "probabilities": [0.5, 0.5], "representation_embedding": [0.0, -3.0]},
+        ]
+
+        selected, metadata = select_classification_rows(
+            rows,
+            method="EntropyGradient+DCMS",
+            budget=2,
+            seed=5,
+            candidate_multiplier=2,
+            semantic_cluster_count=2,
+            dcms_slack_grid=(0.0, 0.5),
+            dcms_kappa=0.5,
+        )
+
+        self.assertEqual(2, len(selected))
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual(4, metadata["stage1_candidate_count"])
+        self.assertEqual(2, metadata["semantic_coverage"]["cluster_count"])
+        self.assertTrue(any(key.startswith("semantic_cluster=") for key in metadata["target_moments"]))
+        self.assertEqual(4, len(metadata["q_propensity"]))
+
     def test_selector_safe_view_removes_derived_classification_oracle_fields(self) -> None:
         safe = selector_safe_view(
             [

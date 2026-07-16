@@ -101,8 +101,14 @@ cover every `id` in `data.jsonl` when running `scripts/prepare.py`.
   are generated from `benchmarks/helpsteer2_preference/train.jsonl` with seed
   `20260712`; they cover selector-safe active rows, oracle labels, A/B swaps,
   and a fixed seed/active/heldout/test split manifest.
+- MIAS preference selection consumes separate frozen `h(prompt,response_A)` and
+  `h(prompt,response_B)` matrices. Package them with
+  `scripts/prepare_mias_features.py`; the selector then forms the antisymmetric
+  difference and never reads active-pool oracle labels. The seed feature file
+  must cover all initially revealed pairs, including ties: MIAS learns A/B
+  direction from non-ties and an order-invariant non-tie gate from all revealed
+  seed labels. Candidate feature rows must also carry exact response
+  completion-token counts for cost normalization.
 - Large FEVER, IMDb, and other binary-task input trees have been removed from
-  the active tree. Their compact evidence is retained in
-  `experiments/reports/binary_legacy/` and related report files. The original
-  sample-level source and prediction-log paths are listed, without being
-  reconstructed, in `experiments/reports/binary_legacy/sample_level_source_inventory.json`.
+  the active tree. Their original sample-level records are unavailable and must
+  be recovered before a historical setting is used again.

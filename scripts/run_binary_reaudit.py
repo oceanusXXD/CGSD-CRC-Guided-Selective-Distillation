@@ -16,6 +16,7 @@ from mias_dcms.binary_reaudit import (
     prepare_binary_reaudit_splits,
     sha256_file,
 )
+from mias_dcms.selection.features import merge_feature_rows
 from mias_dcms.utils import read_json, read_jsonl, write_json, write_jsonl
 
 
@@ -43,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     select.add_argument("--scored_path", type=Path, required=True)
     select.add_argument("--oracle_store_path", type=Path, required=True)
     select.add_argument("--seed_train_rows_path", type=Path, required=True)
+    select.add_argument("--seed_features_path", type=Path)
+    select.add_argument("--candidate_features_path", type=Path)
     select.add_argument("--output_dir", type=Path, required=True)
     select.add_argument("--dataset", required=True)
     select.add_argument("--model", required=True)
@@ -108,10 +111,24 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
 
 def _select(args: argparse.Namespace) -> dict[str, Any]:
     methods = [part.strip() for part in str(args.methods).split(",") if part.strip()]
+    scored_rows = read_jsonl(args.scored_path)
+    seed_rows = read_jsonl(args.seed_train_rows_path)
+    if args.candidate_features_path is not None:
+        scored_rows = merge_feature_rows(
+            scored_rows,
+            read_jsonl(args.candidate_features_path),
+            source_name=str(args.candidate_features_path),
+        )
+    if args.seed_features_path is not None:
+        seed_rows = merge_feature_rows(
+            seed_rows,
+            read_jsonl(args.seed_features_path),
+            source_name=str(args.seed_features_path),
+        )
     results = materialize_binary_reaudit_selection(
-        read_jsonl(args.scored_path),
+        scored_rows,
         oracle_store=read_json(args.oracle_store_path),
-        seed_train_rows=read_jsonl(args.seed_train_rows_path),
+        seed_train_rows=seed_rows,
         dataset=str(args.dataset),
         model=str(args.model),
         methods=methods,

@@ -56,11 +56,17 @@
   "baselines": {
     "preference": [
       "Random",
+      "MIAS",
+      "MIAS+DCMS"
+    ],
+    "preference_ablations": [
       "Reward Margin",
       "APL",
       "ActiveDPO",
       "APL+DCMS",
-      "ActiveDPO+DCMS"
+      "ActiveDPO+DCMS",
+      "GradientDPO",
+      "GradientDPO+DCMS"
     ],
     "multiclass": [
       "Random",
@@ -133,7 +139,7 @@
   },
   "dcms": {
     "utility_normalization": "rank",
-    "main_kappa": 0.05,
+    "main_kappa": 0.1,
     "kappa_ablation": [
       0.02,
       0.05,

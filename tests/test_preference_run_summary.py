@@ -108,6 +108,24 @@ class PreferenceRunSummaryTest(unittest.TestCase):
                 evaluation_metrics={"preference_accuracy": 0.5},
             )
 
+    def test_uses_observed_training_tokens_when_cost_report_provides_them(self) -> None:
+        run = build_preference_run_record(
+            dataset="toy",
+            model="model",
+            method="MIAS",
+            budget=1,
+            seed=1,
+            config_hash="cfg",
+            selection_summary={"selected_count": 1},
+            reveal_summary={"revealed_count": 1, "dpo_train_row_count": 1},
+            training_rows=[{"prompt": "p", "response_1": "a", "response_2": "b"}],
+            train_tokens=4096,
+            oracle_label_calls=3,
+        )
+
+        self.assertEqual(4096, run.cost_metrics["train_tokens"])
+        self.assertEqual(3, run.cost_metrics["oracle_label_calls"])
+
 
 if __name__ == "__main__":
     unittest.main()

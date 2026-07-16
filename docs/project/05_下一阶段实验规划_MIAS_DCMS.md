@@ -333,7 +333,7 @@ DCMS 的归因必须使用 ActiveDPO vs. ActiveDPO+DCMS、APL vs. APL+DCMS 的�
 4. 至少一个代表 setting 能生成完整的样本级 acquisition record；
 5. 新旧汇总指标可以在声明误差内对齐。
 
-在此之前，`experiments/reports/binary_legacy/sample_level_source_inventory.json` 只作为来源清单和附录 provenance。
+在此之前，缺失的历史样本级记录不能用于主线结论或附录 provenance。
 
 ---
 

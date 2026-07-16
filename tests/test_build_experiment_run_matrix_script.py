@@ -47,11 +47,11 @@ class BuildExperimentRunMatrixScriptTest(unittest.TestCase):
                 if line.strip()
             ]
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            self.assertEqual(12, len(rows))
+            self.assertEqual(6, len(rows))
             self.assertEqual(_matrix_config()["evaluation_config"], rows[0]["evaluation_config"])
             self.assertEqual("qwen-0.6b", rows[0]["training_config"]["model_name_or_path"])
             self.assertTrue(summary["is_ready"])
-            self.assertEqual(12, summary["planned_run_count"])
+            self.assertEqual(6, summary["planned_run_count"])
             self.assertEqual(list(DPO_MAIN_METHODS), summary["covered_methods"])
 
     def test_script_returns_nonzero_for_incomplete_config(self) -> None:

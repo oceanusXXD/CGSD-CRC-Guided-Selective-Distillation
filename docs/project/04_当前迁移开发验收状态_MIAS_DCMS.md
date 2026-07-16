@@ -16,7 +16,7 @@
 - MIAS/DCMS 三份项目文档已归档到 `docs/project/`。
 - D0 冻结配置已落到 `configs/mias_dcms_freeze.v1.json`。
 - 旧版源码包、匿名镜像包和历史结果根目录已从当前工作树移除。
-- 原二分类历史结果已迁入 `experiments/reports/binary_legacy/`。
+- 已移除已废弃的二分类历史结果与选择器实现。
 
 ### 当前主线顶层目录
 

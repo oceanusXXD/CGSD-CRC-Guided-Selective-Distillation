@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from contextlib import nullcontext
 import json
 import math
 from pathlib import Path
@@ -76,7 +77,9 @@ class LoraTrainingConfig:
     num_workers: int = 0
     beta: float = 0.1
     update_steps: int | None = None
+    train_token_budget: int | None = None
     initial_policy_adapter_path: str | None = None
+    reference_adapter_path: str | None = None
 
 
 class ClassificationSFTDataset(Dataset[dict[str, list[int]]]):
@@ -286,6 +289,10 @@ def _collate_dpo(
         "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
         "prompt_lengths": torch.tensor(prompt_lengths, dtype=torch.long),
         "pair_count": torch.tensor(len(batch), dtype=torch.long),
+        "pair_input_token_counts": torch.tensor(
+            [len(chosen_item) + len(rejected_item) for chosen_item, rejected_item in zip(chosen, rejected, strict=True)],
+            dtype=torch.long,
+        ),
     }
 
 
@@ -293,7 +300,13 @@ def _load_lora_policy(config: LoraTrainingConfig) -> tuple[Any, Any]:
     from peft import LoraConfig, PeftModel, TaskType, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
+    policy_path = Path(config.initial_policy_adapter_path) if config.initial_policy_adapter_path else None
+    if policy_path is not None and not policy_path.is_dir():
+        raise FileNotFoundError(
+            f"initial policy adapter directory does not exist: {policy_path}"
+        )
+    tokenizer_source = str(policy_path) if policy_path is not None else config.model_name_or_path
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
@@ -304,12 +317,7 @@ def _load_lora_policy(config: LoraTrainingConfig) -> tuple[Any, Any]:
     model.config.use_cache = False
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()
-    if config.initial_policy_adapter_path:
-        policy_path = Path(config.initial_policy_adapter_path)
-        if not policy_path.is_dir():
-            raise FileNotFoundError(
-                f"initial policy adapter directory does not exist: {policy_path}"
-            )
+    if policy_path is not None:
         return tokenizer, PeftModel.from_pretrained(
             model,
             policy_path,
@@ -327,6 +335,7 @@ def _load_lora_policy(config: LoraTrainingConfig) -> tuple[Any, Any]:
 
 
 def _load_reference_model(config: LoraTrainingConfig) -> Any:
+    from peft import PeftModel
     from transformers import AutoModelForCausalLM
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -335,6 +344,14 @@ def _load_reference_model(config: LoraTrainingConfig) -> Any:
         low_cpu_mem_usage=True,
     )
     model.config.use_cache = False
+    reference_adapter_path = config.reference_adapter_path or config.initial_policy_adapter_path
+    if reference_adapter_path:
+        adapter_path = Path(reference_adapter_path)
+        if not adapter_path.is_dir():
+            raise FileNotFoundError(
+                f"reference adapter directory does not exist: {adapter_path}"
+            )
+        model = PeftModel.from_pretrained(model, adapter_path, is_trainable=False)
     model.eval()
     for parameter in model.parameters():
         parameter.requires_grad_(False)
@@ -408,17 +425,21 @@ def _run_dpo_loop(
     from transformers import get_scheduler, set_seed
 
     set_seed(config.seed)
-    accelerator = Accelerator(
-        gradient_accumulation_steps=config.gradient_accumulation_steps,
-        mixed_precision=config.mixed_precision,
-    )
+    accelerator = Accelerator(mixed_precision=config.mixed_precision)
     optimizer = torch.optim.AdamW(
         (parameter for parameter in policy.parameters() if parameter.requires_grad),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
     update_steps_per_epoch = math.ceil(len(dataloader) / config.gradient_accumulation_steps)
-    total_steps = int(config.update_steps or max(1, update_steps_per_epoch * config.epochs))
+    token_budget = config.train_token_budget
+    if token_budget is not None and token_budget <= 0:
+        raise ValueError("train_token_budget must be positive when provided")
+    total_steps = _dpo_scheduler_steps(
+        dataloader=dataloader,
+        config=config,
+        update_steps_per_epoch=update_steps_per_epoch,
+    )
     scheduler = get_scheduler(
         "linear",
         optimizer=optimizer,
@@ -437,53 +458,70 @@ def _run_dpo_loop(
     epoch = 0
     processed_pair_count = 0
     processed_input_tokens = 0
-    while completed_steps < total_steps:
+    accumulation_steps = max(1, int(config.gradient_accumulation_steps))
+    while token_budget is None or processed_input_tokens < token_budget:
         epoch += 1
+        made_progress = False
+        accumulation_group: list[dict[str, torch.Tensor]] = []
         for batch in dataloader:
+            if token_budget is not None:
+                batch = _trim_dpo_batch_to_token_budget(
+                    batch,
+                    remaining_tokens=token_budget - processed_input_tokens,
+                )
+                if batch is None:
+                    continue
             pair_count = int(batch.pop("pair_count").item())
+            pair_input_token_counts = batch.pop("pair_input_token_counts")
+            batch_token_count = int(pair_input_token_counts.sum().detach().item())
             processed_pair_count += pair_count
-            processed_input_tokens += int(batch["attention_mask"].sum().detach().item())
-            with accelerator.accumulate(policy):
-                policy_output = policy(
-                    input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]
-                )
-                policy_scores = sequence_log_likelihoods(
-                    logits=policy_output.logits,
-                    input_ids=batch["input_ids"],
-                    prompt_lengths=batch["prompt_lengths"],
-                    attention_mask=batch["attention_mask"],
-                )
-                with torch.inference_mode():
-                    reference_output = reference(
-                        input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]
-                    )
-                    reference_scores = sequence_log_likelihoods(
-                        logits=reference_output.logits,
-                        input_ids=batch["input_ids"],
-                        prompt_lengths=batch["prompt_lengths"],
-                        attention_mask=batch["attention_mask"],
-                    )
-                loss = dpo_loss(
-                    policy_chosen=policy_scores[:pair_count],
-                    policy_rejected=policy_scores[pair_count:],
-                    reference_chosen=reference_scores[:pair_count],
-                    reference_rejected=reference_scores[pair_count:],
+            processed_input_tokens += batch_token_count
+            made_progress = True
+            batch["pair_count"] = torch.tensor(pair_count, dtype=torch.long)
+            batch["pair_input_token_counts"] = pair_input_token_counts
+            accumulation_group.append(batch)
+            budget_exhausted = token_budget is not None and processed_input_tokens >= token_budget
+            if len(accumulation_group) >= accumulation_steps or budget_exhausted:
+                group_losses, group_accuracies = _run_dpo_accumulation_group(
+                    accumulation_group,
+                    policy=policy,
+                    reference=reference,
+                    accelerator=accelerator,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
                     beta=config.beta,
+                    max_grad_norm=config.max_grad_norm,
                 )
-                accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(policy.parameters(), config.max_grad_norm)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-            losses.append(float(loss.detach().float().item()))
-            accuracies.append(
-                float((policy_scores[:pair_count] > policy_scores[pair_count:]).float().mean().item())
-            )
-            if accelerator.sync_gradients:
+                losses.extend(group_losses)
+                accuracies.extend(group_accuracies)
+                accumulation_group = []
                 completed_steps += 1
-                if completed_steps >= total_steps:
+                if token_budget is None and completed_steps >= total_steps:
                     break
+                if budget_exhausted:
+                    break
+        if accumulation_group and (token_budget is not None or completed_steps < total_steps):
+            group_losses, group_accuracies = _run_dpo_accumulation_group(
+                accumulation_group,
+                policy=policy,
+                reference=reference,
+                accelerator=accelerator,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                beta=config.beta,
+                max_grad_norm=config.max_grad_norm,
+            )
+            losses.extend(group_losses)
+            accuracies.extend(group_accuracies)
+            completed_steps += 1
+        if token_budget is None and completed_steps >= total_steps:
+            break
+        if token_budget is not None and not made_progress:
+            break
+    if not losses:
+        raise ValueError(
+            "train_token_budget is smaller than every complete DPO pair in the training dataset"
+        )
     _save_adapter(
         accelerator=accelerator,
         model=policy,
@@ -497,8 +535,143 @@ def _run_dpo_loop(
         "mean_policy_preference_accuracy": sum(accuracies) / len(accuracies),
         "processed_pair_count": processed_pair_count,
         "processed_input_tokens": processed_input_tokens,
+        "train_token_budget": token_budget,
+        "unused_train_token_budget": (
+            int(token_budget - processed_input_tokens) if token_budget is not None else None
+        ),
+        "token_budget_exhausted": (
+            bool(processed_input_tokens == token_budget) if token_budget is not None else None
+        ),
+        "scheduler_steps": total_steps,
+        "reference_adapter_path": config.reference_adapter_path or config.initial_policy_adapter_path,
         "model_name_or_path": config.model_name_or_path,
     }
+
+
+def _run_dpo_accumulation_group(
+    batches: Sequence[dict[str, torch.Tensor]],
+    *,
+    policy: Any,
+    reference: Any,
+    accelerator: Any,
+    optimizer: Any,
+    scheduler: Any,
+    beta: float,
+    max_grad_norm: float,
+) -> tuple[list[float], list[float]]:
+    if not batches:
+        raise ValueError("DPO accumulation group must not be empty")
+    pair_counts = [int(batch["pair_count"].item()) for batch in batches]
+    total_pairs = sum(pair_counts)
+    losses: list[float] = []
+    accuracies: list[float] = []
+    for index, (batch, pair_count) in enumerate(zip(batches, pair_counts, strict=True)):
+        sync_context = (
+            nullcontext()
+            if index == len(batches) - 1
+            else accelerator.no_sync(policy)
+        )
+        with sync_context:
+            policy_output = policy(
+                input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]
+            )
+            policy_scores = sequence_log_likelihoods(
+                logits=policy_output.logits,
+                input_ids=batch["input_ids"],
+                prompt_lengths=batch["prompt_lengths"],
+                attention_mask=batch["attention_mask"],
+            )
+            with torch.inference_mode():
+                reference_output = reference(
+                    input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]
+                )
+                reference_scores = sequence_log_likelihoods(
+                    logits=reference_output.logits,
+                    input_ids=batch["input_ids"],
+                    prompt_lengths=batch["prompt_lengths"],
+                    attention_mask=batch["attention_mask"],
+                )
+            loss = dpo_loss(
+                policy_chosen=policy_scores[:pair_count],
+                policy_rejected=policy_scores[pair_count:],
+                reference_chosen=reference_scores[:pair_count],
+                reference_rejected=reference_scores[pair_count:],
+                beta=beta,
+            )
+            accelerator.backward(loss * (pair_count / total_pairs))
+        losses.append(float(loss.detach().float().item()))
+        accuracies.append(
+            float(
+                (policy_scores[:pair_count] > policy_scores[pair_count:])
+                .float()
+                .mean()
+                .item()
+            )
+        )
+    accelerator.clip_grad_norm_(policy.parameters(), max_grad_norm)
+    optimizer.step()
+    scheduler.step()
+    optimizer.zero_grad()
+    return losses, accuracies
+
+
+def _dpo_scheduler_steps(
+    *,
+    dataloader: DataLoader,
+    config: LoraTrainingConfig,
+    update_steps_per_epoch: int,
+) -> int:
+    """Estimate a scheduler horizon without using it as a token-budget stop condition."""
+    if config.train_token_budget is None:
+        return int(config.update_steps or max(1, update_steps_per_epoch * config.epochs))
+
+    dataset = getattr(dataloader, "dataset", None)
+    examples = getattr(dataset, "examples", ())
+    token_counts = [
+        len(example["chosen_input_ids"]) + len(example["rejected_input_ids"])
+        for example in examples
+    ]
+    if not token_counts:
+        return max(1, int(config.update_steps or 1))
+    mean_pair_tokens = sum(token_counts) / len(token_counts)
+    estimated_micro_batches = math.ceil(
+        int(config.train_token_budget) / max(1.0, mean_pair_tokens * config.batch_size)
+    )
+    estimated_updates = math.ceil(estimated_micro_batches / config.gradient_accumulation_steps)
+    return max(1, estimated_updates)
+
+
+def _trim_dpo_batch_to_token_budget(
+    batch: dict[str, torch.Tensor],
+    *,
+    remaining_tokens: int,
+) -> dict[str, torch.Tensor] | None:
+    """Keep a deterministic prefix of complete pairs that fits the remaining budget."""
+    if remaining_tokens <= 0:
+        return None
+    pair_count = int(batch["pair_count"].item())
+    pair_tokens = [int(value) for value in batch["pair_input_token_counts"].tolist()]
+    retained_count = 0
+    retained_tokens = 0
+    for pair_tokens_count in pair_tokens:
+        if retained_tokens + pair_tokens_count > remaining_tokens:
+            break
+        retained_count += 1
+        retained_tokens += pair_tokens_count
+    if retained_count == 0:
+        return None
+    if retained_count == pair_count:
+        return batch
+
+    sequence_indexes = [*range(retained_count), *range(pair_count, pair_count + retained_count)]
+    trimmed = {
+        "input_ids": batch["input_ids"][sequence_indexes],
+        "attention_mask": batch["attention_mask"][sequence_indexes],
+        "prompt_lengths": batch["prompt_lengths"][sequence_indexes],
+        "pair_count": torch.tensor(retained_count, dtype=torch.long),
+        "pair_input_token_counts": batch["pair_input_token_counts"][:retained_count],
+    }
+    return trimmed
 
 
 def _save_adapter(*, accelerator: Any, model: Any, tokenizer: Any, output_dir: Path) -> None:

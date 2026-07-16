@@ -22,6 +22,7 @@ from mias_dcms.utils import read_json, read_jsonl, resolve_model_reference, writ
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train one DPO preference run from revealed rows.")
     parser.add_argument("--dpo_train_rows_path", type=Path, required=True)
+    parser.add_argument("--selection_summary_path", type=Path)
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument("--training_summary_path", type=Path, required=True)
     parser.add_argument("--cost_report_path", type=Path, required=True)
@@ -49,6 +50,11 @@ def main() -> None:
         seed=int(args.seed),
     )
     backend_summary = train_preference_dpo(rows, config=config)
+    selection_summary = (
+        read_json(args.selection_summary_path)
+        if args.selection_summary_path is not None
+        else {}
+    )
     training_metrics = _training_metrics(
         backend_summary,
         rows=rows,
@@ -73,7 +79,12 @@ def main() -> None:
         "seed_label_count": int(args.seed_label_count),
         "evaluation_label_count": int(args.evaluation_label_count),
         "judge_calls": int(args.judge_calls),
-        "selector_compute_seconds": float(args.selector_compute_seconds),
+        "selector_compute_seconds": float(
+            selection_summary.get(
+                "selector_compute_seconds",
+                args.selector_compute_seconds,
+            )
+        ),
         "train_tokens": int(
             backend_summary.get("processed_input_tokens", estimate_preference_train_tokens(rows))
         ),
@@ -128,9 +139,19 @@ def _lora_config_from_payload(
             if payload.get("update_steps") is not None
             else None
         ),
+        train_token_budget=(
+            int(payload["train_token_budget"])
+            if payload.get("train_token_budget") is not None
+            else None
+        ),
         initial_policy_adapter_path=(
             str(payload["initial_policy_adapter_path"])
             if payload.get("initial_policy_adapter_path")
+            else None
+        ),
+        reference_adapter_path=(
+            str(payload["reference_adapter_path"])
+            if payload.get("reference_adapter_path")
             else None
         ),
     )
@@ -144,15 +165,33 @@ def _training_metrics(
 ) -> dict[str, Any]:
     configured_update_steps = training_config.get("update_steps")
     observed_steps = backend_summary.get("optimizer_steps")
+    reported_token_budget = backend_summary.get("train_token_budget")
+    configured_token_budget = training_config.get("train_token_budget")
+    training_token_budget = (
+        reported_token_budget
+        if reported_token_budget is not None
+        else configured_token_budget
+    )
+    if training_token_budget is None:
+        training_token_budget = estimate_preference_train_tokens(rows)
     return {
         "dpo_train_row_count": len(rows),
-        "update_steps": int(observed_steps) if observed_steps is not None else int(configured_update_steps),
+        "update_steps": (
+            int(observed_steps)
+            if observed_steps is not None
+            else int(configured_update_steps)
+            if configured_update_steps is not None
+            else None
+        ),
         "planned_update_steps": int(configured_update_steps) if configured_update_steps is not None else None,
-        "training_token_budget": int(training_config.get("train_token_budget", estimate_preference_train_tokens(rows))),
+        "training_token_budget": int(training_token_budget),
         "mean_train_loss": backend_summary.get("mean_train_loss"),
         "mean_policy_preference_accuracy": backend_summary.get("mean_policy_preference_accuracy"),
         "processed_pair_count": backend_summary.get("processed_pair_count"),
         "processed_input_tokens": backend_summary.get("processed_input_tokens"),
+        "unused_train_token_budget": backend_summary.get("unused_train_token_budget"),
+        "token_budget_exhausted": backend_summary.get("token_budget_exhausted"),
+        "reference_adapter_path": backend_summary.get("reference_adapter_path"),
     }
 
 

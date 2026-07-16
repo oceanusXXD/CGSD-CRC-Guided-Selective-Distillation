@@ -83,6 +83,50 @@ class BinaryReauditTest(unittest.TestCase):
         self.assertEqual(7, entropy["cost_metrics"]["supervision_budget_total"])
         self.assertEqual(0.0, entropy["selection_metrics"]["total_absolute_prediction_error"])
 
+    def test_mias_binary_selection_uses_seed_and_candidate_features(self) -> None:
+        artifacts = prepare_binary_reaudit_splits(
+            _source_rows(),
+            dataset="toy_binary",
+            seed_label_count=6,
+            active_pool_size=8,
+            test_size=6,
+            seed=17,
+        )
+        seed_rows = [
+            {
+                **row,
+                "representation_embedding": [float(index), float(index % 2)],
+            }
+            for index, row in enumerate(artifacts["seed_train_rows"])
+        ]
+        scored_rows = [
+            {
+                **row,
+                "probabilities": [0.5, 0.5],
+                "representation_embedding": [float(index - 4), float(index % 2)],
+            }
+            for index, row in enumerate(artifacts["selection_pool"])
+        ]
+
+        results = materialize_binary_reaudit_selection(
+            scored_rows,
+            oracle_store=artifacts["selection_oracle_store"],
+            seed_train_rows=seed_rows,
+            dataset="toy_binary",
+            model="toy-model",
+            methods=["MIAS"],
+            budget=3,
+            seed=5,
+            config_hash="toy-config",
+            evaluation_label_count=6,
+        )
+
+        self.assertEqual(3, len(results["MIAS"]["selected_ids"]))
+        self.assertEqual(
+            "calibrated_seed_surrogate",
+            results["MIAS"]["selection_metadata"]["posterior_source"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,19 +1,15 @@
 {
-  "artifact_root": "experiments/runs/dpo_pilot/current",
+  "artifact_root": "experiments/runs/dpo_ablation/gradient",
   "budgets": [
     4
   ],
   "data_config": {
-    "active_dpo_length_normalize": true,
-    "active_dpo_novelty_weight": 0.25,
-    "mias_bootstrap_heads": 20,
-    "mias_kappa": 0.1,
-    "mias_slack_grid": "0,0.01,0.02,0.05,0.1,0.2,0.5",
     "active_pool_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_pool.jsonl",
+    "gradient_dpo_candidate_multiplier": 4,
+    "gradient_dpo_gradient_checkpointing": true,
+    "gradient_dpo_kappa": 0.1,
+    "gradient_dpo_selector_device": "cpu",
     "logprobs_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_logprobs.jsonl",
-    "mias_pool_features_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/mias_selection_features.jsonl",
-    "mias_seed_features_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/mias_seed_features.jsonl",
-    "mias_seed_rows_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/initial_seed_reveal/dpo_train_rows.jsonl",
     "oracle_store_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_oracle_store.json",
     "prompt_clusters_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/selection_prompt_clusters.jsonl",
     "split_manifest_path": "experiments/inputs/preference/helpsteer2_preference/cpu_pilot/split_manifest.json"
@@ -42,9 +38,8 @@
     "judge_version": "fixed-human-labels-cpu-pilot-v1"
   },
   "methods": [
-    "Random",
-    "MIAS",
-    "MIAS+DCMS"
+    "GradientDPO",
+    "GradientDPO+DCMS"
   ],
   "models": [
     "qwen3-0.6b"

@@ -77,7 +77,7 @@ def recommend_algorithm_action(
             "keep_current_algorithm",
             ["Neither the multiclass nor preference shift gate is established."],
             evidence,
-            ["collect full-budget diagnostics before changing PCSS or adding WSR"],
+            ["collect full-budget diagnostics before refining DCMS constraints or adding WSR"],
         )
 
     missing_comparisons: list[str] = []
@@ -122,13 +122,13 @@ def recommend_algorithm_action(
 
     if classification_established and classification_underperforms:
         return _decision(
-            "modify_pcss",
+            "refine_dcms_constraints",
             [
                 "Stable class-prior distortion is concentrated in repeatedly enriched classes and hurts LoRA performance.",
-                "Extend PCSS from binary strata to multiclass target proportions before considering a full redesign.",
+                "Refine DCMS target moments and slack constraints before considering a full redesign.",
             ],
             evidence,
-            ["implement multiclass PCSS quotas and repeat the selected training budget"],
+            ["run the same budget with audited multiclass DCMS target moments"],
         )
 
     return _decision(

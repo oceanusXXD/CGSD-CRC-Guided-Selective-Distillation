@@ -7,8 +7,6 @@ This repository is organized around the MIAS/DCMS AAAI mainline:
 
 The active research direction is documented in `docs/project/01_最终任务_算法与AAAI论文路径_MIAS_DCMS.md`. The development and acceptance path is documented in `docs/project/02_开发与实验执行文档_MIAS_DCMS.md` and `docs/project/03_开发与实验验收清单_MIAS_DCMS.md`.
 
-Previous CRC/PCSS-centered binary-task drafts are archived under `docs/archive/emnlp_legacy/`. Binary-task tables and figures are retained only as legacy evidence under `experiments/reports/binary_legacy/`; they are not the active package or experiment tree.
-
 ## Repository Layout
 
 - `mias_dcms/`: active reusable Python package for the MIAS/DCMS mainline.
@@ -17,11 +15,9 @@ Previous CRC/PCSS-centered binary-task drafts are archived under `docs/archive/e
 - `configs/`: frozen protocol and experiment configuration files.
 - `docs/project/`: MIAS/DCMS task, execution, status, and acceptance documents.
 - `docs/paper/`: active paper draft materials.
-- `docs/archive/`: superseded paper drafts and narratives.
 - `experiments/inputs/`: durable input surfaces such as source data, split ids, embeddings, and reusable caches.
 - `experiments/runs/`: local or compact run outputs.
 - `experiments/reports/`: compact reports and provenance.
-- `experiments/reports/binary_legacy/`: archived binary-task tables, figures, and summary.
 - `resources/`: supporting non-code resources.
 
 Retired top-level legacy trees are intentionally not part of the active repository layout.
@@ -44,6 +40,10 @@ At the codebase level, the active tree currently provides:
 - DPO-side intervention auditing for length-gamma response, selector replacement, and A/B position propensity;
 - DPO preference evaluation metrics, including worst-group, length-controlled win rate, and capability regression;
 - selector-safe Reward Margin, APL, and fixed-pool ActiveDPO preference baseline scoring;
+- seed-only calibrated MIAS surrogate heads for binary, multiclass, and DPO
+  pre-training selection, including response-aware antisymmetric DPO features;
+- expected validation-influence utilities and complete-pool MIAS+DCMS with
+  bootstrap posterior bounds when the seed sample is sufficient;
 - preference baseline-to-DCMS candidate preparation for APL+DCMS and ActiveDPO+DCMS runs;
 - preference acquisition run-summary generation for paper-level aggregation;
 - DPO main-experiment run-matrix preflight for dataset/model/budget/seed/method coverage, planned artifact paths, and shared training/judge config hashes;
@@ -51,7 +51,7 @@ At the codebase level, the active tree currently provides:
 - real initial DPO policy checkpoint registration for Gate 4 evidence, with required adapter-file validation;
 - DPO execution manifest generation for ordered selection, reveal, training, evaluation, and run-summary stages;
 - DPO execution status auditing for completed, blocked, in-progress, and failed runs from manifest artifacts;
-- a completed two-run CPU HelpSteer2 DPO pilot for Random and ActiveDPO+DCMS (seed 1);
+- a CPU HelpSteer2 selector-mechanics pilot for Random, MIAS, and MIAS+DCMS;
 - DPO run-pack validation for required method/seed coverage, visible failed runs, required metrics, and paper artifact manifest traceability;
 - paired run-metric comparison for baseline-vs-treatment deltas, confidence intervals, and permutation tests;
 - paper claim-to-evidence auditing for Gate 10 claim freeze and banned overclaim detection;
@@ -134,18 +134,22 @@ python scripts/run_binary_reaudit.py prepare \
   --label_field groundtruth
 ```
 
-After scoring the selector-safe pool with the frozen binary selector, use the
-matching oracle and seed rows to materialize the method-specific selections:
+After creating label-safe frozen feature artifacts for the seed and candidate
+ids, use the matching oracle and seed rows to materialize the pre-training
+selections. The feature JSONL files must exactly cover their corresponding row
+files and must not contain labels:
 
 ```bash
 python scripts/run_binary_reaudit.py select \
   --scored_path /path/to/binary_scored.jsonl \
   --oracle_store_path experiments/inputs/binary/imdb_q1/selection_oracle_store.json \
   --seed_train_rows_path experiments/inputs/binary/imdb_q1/seed_train_rows.jsonl \
+  --seed_features_path /path/to/imdb_q1_seed_mias_features.jsonl \
+  --candidate_features_path /path/to/imdb_q1_pool_mias_features.jsonl \
   --output_dir experiments/runs/binary_reaudit/imdb_q1 \
   --dataset imdb_q1 \
   --model qwen3-0.6b \
-  --methods Random,Entropy,Margin \
+  --methods Random,MIAS,MIAS+DCMS \
   --budget 100 \
   --seed 42 \
   --config_hash binary_reaudit_v1 \
@@ -155,7 +159,9 @@ python scripts/run_binary_reaudit.py select \
 ### 2. Multiclass MIAS pilot
 
 AG News and TREC inputs are already under `experiments/inputs/benchmarks/`.
-Create fixed ids first, score the same pool, then run the diagnostic selectors:
+Create fixed ids first. MIAS needs frozen seed and candidate feature artifacts
+joined by exact id; scoring with `--save-representations` is sufficient when
+those embeddings remain in the scored rows.
 
 ```bash
 python scripts/prepare_multiclass_splits.py \
@@ -174,12 +180,22 @@ python scripts/benchmark_pipeline.py score-classification \
   --device-map auto \
   --save-representations
 
+python scripts/benchmark_pipeline.py score-classification \
+  --data-path experiments/runs/multiclass/ag_news/splits/seed_rows.jsonl \
+  --output-path experiments/runs/multiclass/ag_news/qwen06b_seed_scored.jsonl \
+  --model /home/ubuntu/models/qwen3-0.6b \
+  --device-map auto \
+  --save-representations
+
 python scripts/benchmark_pipeline.py diagnose-classification \
   --scored-path experiments/runs/multiclass/ag_news/qwen06b_scored.jsonl \
   --oracle_store_path experiments/runs/multiclass/ag_news/splits/active_oracle_store.json \
   --output-dir experiments/runs/multiclass/ag_news/diagnostics \
   --budgets 100,500,1000 \
-  --methods random,entropy,badge,galaxy,entropy+dcms,badge+dcms \
+  --methods random,entropy,badge,galaxy,mias,mias+dcms \
+  --mias-seed-path experiments/runs/multiclass/ag_news/qwen06b_seed_scored.jsonl \
+  --mias-seed-feature-path /path/to/ag_news_seed_mias_features.jsonl \
+  --mias-candidate-feature-path /path/to/ag_news_pool_mias_features.jsonl \
   --seed 42
 ```
 
@@ -231,14 +247,24 @@ python scripts/audit_preference_experiment_preflight.py \
   --logprobs_path experiments/inputs/preference/helpsteer2_preference/selection_logprobs.jsonl \
   --split_manifest_path experiments/inputs/preference/helpsteer2_preference/split_manifest.json \
   --run_matrix_path experiments/runs/dpo_main/current/run_matrix.jsonl \
+  --mias_seed_rows_path experiments/inputs/preference/helpsteer2_preference/initial_seed_reveal/revealed_rows.jsonl \
+  --mias_seed_features_path experiments/inputs/preference/helpsteer2_preference/mias_seed_features.jsonl \
+  --mias_pool_features_path experiments/inputs/preference/helpsteer2_preference/mias_pool_features.jsonl \
   --output_path experiments/reports/dpo_main/current/preflight.json \
-  --expected_methods 'Random,Reward Margin,APL,ActiveDPO,APL+DCMS,ActiveDPO+DCMS' \
+  --expected_methods 'Random,MIAS,MIAS+DCMS' \
   --expected_seeds 1,2,3,4,5
 
 python scripts/audit_dpo_execution_status.py \
   --manifest_path experiments/runs/dpo_main/current/execution_manifest.json \
   --output_path experiments/reports/dpo_main/current/execution_status.json
 ```
+
+For MIAS DPO, the seed feature artifact must cover every initially revealed
+pair, including ties. The direction head trains on A/B pairs, while a separate
+order-invariant gate estimates the probability that a candidate is non-tie and
+therefore usable by DPO. Formal runs require at least 20 non-tie seed pairs
+with both directions represented; a smaller CPU pilot is selector-mechanics
+only and must not be used for a performance comparison.
 
 Start with one cheap stage before launching all 30 planned runs:
 

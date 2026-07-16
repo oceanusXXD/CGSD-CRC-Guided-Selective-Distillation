@@ -4,8 +4,8 @@
 > placeholder only with a frozen run record or paper artifact.
 >
 > Canonical terms: **MIAS** (Model-Induced Acquisition Shift) and **DCMS**
-> (Distribution-Constrained Model-Guided Selection). Do not introduce SISS,
-> DGA, PCSS, CRC, or AED as competing main-method names in the paper.
+> (Distribution-Constrained Model-Guided Selection). Do not introduce
+> competing main-method names in the paper.
 
 ## 1. Proposed Paper Claim
 

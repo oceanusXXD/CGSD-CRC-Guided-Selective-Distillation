@@ -86,7 +86,7 @@ AAAI Main Track 明确接受理论、方法、算法、实证、整合性和批�
 2. 小模型为每个样本计算预测概率或不确定性；
 3. 在预算 $B$ 下挑选一部分样本交给教师标注；
 4. 用教师标签微调学生模型；
-5. 比较 Random、difficulty、typicality、diversity、PCSS 等方法。
+5. 比较 Random、difficulty、typicality 和 diversity 等方法。
 
 原论文观察到：不同真实类别在选择器上的不确定性分布不同，因此不确定性采样会改变被标注训练集的标签构成。
 
@@ -100,7 +100,6 @@ AAAI Main Track 明确接受理论、方法、算法、实证、整合性和批�
 - Qwen3-0.6B 与部分 Qwen3-1.7B 容量对照；
 - Codebase q1 的训练构成控制实验；
 - $\varepsilon_{\mathrm{ent}}$ 作为二分类特殊诊断；
-- PCSS 作为 DCMS 的二分类硬分区特例。
 
 需要修正：
 
@@ -108,8 +107,7 @@ AAAI Main Track 明确接受理论、方法、算法、实证、整合性和批�
 - guide、seed、calibration、certification 的教师标签全部计入监督预算；
 - $\varepsilon_{\mathrm{ent}}$ 依赖 seed / guide 标签，不再称为 zero-cost；
 - 固定偏置采样器的期望 shift 不会按 $O(1/\sqrt n)$ 消失；随预算缩小的是随机波动；
-- CRC 与数据选择后模型性能无直接保证，不再作为主贡献；
-- PCSS 匹配自然先验不一定符合 Macro-F1 或 worst-class 目标，因此退出最终主算法。
+- 二分类采样比例不一定符合 Macro-F1 或 worst-class 目标，因此不作为最终主算法。
 
 ## 2.3 新增内容
 
@@ -635,21 +633,6 @@ $$
 9. 用统一 recipe 更新模型；
 10. 记录 propensity、coverage、utility、成本和下游指标。
 
-## 5.11 PCSS 与 DCMS 的关系
-
-PCSS 可以视为以下特殊情况：
-
-- 二分类；
-- 只有两个硬分区；
-- group membership 完全确定；
-- 目标比例固定；
-- 不处理多属性和交互项；
-- 不显式约束 utility retention。
-
-因此 PCSS 保留在附录中作为历史方法和特例，不再承担主算法贡献。
-
----
-
 # 6. 理论内容与声明边界
 
 正文只保留四项清晰结果。
@@ -968,7 +951,7 @@ preference strength 只作标注后诊断。
 | Entropy + DCMS | 必须 | 简单 utility + 分布约束 |
 | BADGE + DCMS | 必须 | 复杂 utility + 分布约束 |
 
-Margin、BALD、CoreSet 放入附录。PCSS 只在二分类附录比较。
+Margin、BALD 和 CoreSet 放入附录。
 
 ## 8.4 Baseline 公平性
 

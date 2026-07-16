@@ -128,7 +128,8 @@ def materialize_binary_reaudit_selection(
 
     safe_rows = selector_safe_view(scored)
     assert_selector_rows_are_label_safe(safe_rows)
-    seed_rows = [_validated_training_row(row) for row in seed_train_rows]
+    seed_selector_rows = [dict(row) for row in seed_train_rows]
+    seed_rows = [_validated_training_row(row) for row in seed_selector_rows]
     output: dict[str, dict[str, Any]] = {}
     for method in methods:
         normalized_method = str(method).strip()
@@ -139,6 +140,7 @@ def materialize_binary_reaudit_selection(
             method=normalized_method,
             budget=int(budget),
             seed=int(seed),
+            mias_seed_rows=seed_selector_rows,
         )
         selected_ids = {str(row["id"]) for row in selected_rows}
         if len(selected_ids) != budget:

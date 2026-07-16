@@ -74,6 +74,7 @@ def main() -> None:
             "score_field": score_field,
             "score": score,
             "selected": int(sample_id in selected_id_set),
+            **_gradient_dpo_audit_fields(row),
         }
         for row, sample_id, score in zip(rows, sample_ids, scores, strict=True)
     ]
@@ -122,6 +123,14 @@ def _score_from_row(row: dict[str, object], *, method: str, score_field: str) ->
         return float(selector_scores[method])
     sample_id = row.get("sample_id", row.get("id", "<unknown>"))
     raise ValueError(f"row {sample_id!r} is missing score field {score_field!r}")
+
+
+def _gradient_dpo_audit_fields(row: dict[str, object]) -> dict[str, object]:
+    return {
+        str(key): value
+        for key, value in row.items()
+        if str(key).startswith("gradient_dpo_") and value is not None
+    }
 
 
 if __name__ == "__main__":

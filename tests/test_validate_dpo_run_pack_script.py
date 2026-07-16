@@ -59,8 +59,8 @@ class ValidateDPORunPackScriptTest(unittest.TestCase):
             self.assertEqual(0, completed.returncode, completed.stderr)
             payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertTrue(payload["is_ready"])
-            self.assertEqual(12, payload["expected_run_count"])
-            self.assertEqual(12, payload["completed_run_count"])
+            self.assertEqual(6, payload["expected_run_count"])
+            self.assertEqual(6, payload["completed_run_count"])
             self.assertEqual([], payload["issues"])
 
     def test_script_returns_nonzero_when_required_run_is_missing(self) -> None:

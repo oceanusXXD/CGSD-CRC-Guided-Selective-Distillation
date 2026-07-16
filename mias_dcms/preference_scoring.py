@@ -7,7 +7,12 @@ from typing import Any
 from mias_dcms.selectors import assert_selector_rows_are_label_safe
 
 
-SUPPORTED_PREFERENCE_SCORE_METHODS = ("reward_margin", "apl", "active_dpo")
+SUPPORTED_PREFERENCE_SCORE_METHODS = (
+    "reward_margin",
+    "apl",
+    "active_dpo",
+    "gradient_dpo",
+)
 
 
 def reward_margin_scores(
@@ -159,6 +164,58 @@ def active_dpo_score_components(
     return components
 
 
+def gradient_dpo_cheap_score_components(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    probability_field: str = "probability_response_1",
+    policy_gap_field: str = "policy_logprob_gap",
+    reference_gap_field: str = "reference_logprob_gap",
+    token_count_response_1_field: str = "token_count_response_1",
+    token_count_response_2_field: str = "token_count_response_2",
+    id_field: str = "sample_id",
+) -> dict[str, dict[str, float]]:
+    """Build the label-safe first-stage score for GradientDPO.
+
+    The score favors uncertain comparisons whose current DPO margin is still
+    sensitive to an update.  It deliberately does not use the oracle
+    preference label or treat policy/reference divergence as final utility.
+    """
+    components: dict[str, dict[str, float]] = {}
+    for row in rows:
+        sample_id = _row_id(row, id_field=id_field)
+        probability = _probability(row, probability_field)
+        uncertainty = 1.0 - abs(2.0 * probability - 1.0)
+        policy_gap = _logprob_gap(
+            row,
+            gap_field=policy_gap_field,
+            response_1_field="policy_logprob_response_1",
+            response_2_field="policy_logprob_response_2",
+        )
+        reference_gap = _logprob_gap(
+            row,
+            gap_field=reference_gap_field,
+            response_1_field="reference_logprob_response_1",
+            response_2_field="reference_logprob_response_2",
+        )
+        sensitivity = 1.0 / (1.0 + abs(policy_gap - reference_gap))
+        pair_token_count = _pair_token_count(
+            row,
+            response_1_field=token_count_response_1_field,
+            response_2_field=token_count_response_2_field,
+        )
+        cheap_score = uncertainty * sensitivity
+        components[sample_id] = {
+            "gradient_dpo_uncertainty": uncertainty,
+            "gradient_dpo_dpo_sensitivity": sensitivity,
+            "gradient_dpo_pair_token_count": pair_token_count,
+            "gradient_dpo_cheap_score": cheap_score,
+            # The final score is replaced by the direct gradient utility in
+            # score_preference_gradients.py after the top-4B filter.
+            "gradient_dpo_score": cheap_score,
+        }
+    return components
+
+
 def build_preference_baseline_score_rows(
     rows: Iterable[dict[str, Any]],
     *,
@@ -173,6 +230,7 @@ def build_preference_baseline_score_rows(
     normalized_methods = _normalize_methods(methods)
     score_maps: dict[str, dict[str, float]] = {}
     active_dpo_components: dict[str, dict[str, float]] = {}
+    gradient_dpo_components: dict[str, dict[str, float]] = {}
     if "reward_margin" in normalized_methods:
         score_maps["reward_margin"] = reward_margin_scores(source_rows, id_field=id_field)
     if "apl" in normalized_methods:
@@ -192,6 +250,15 @@ def build_preference_baseline_score_rows(
             sample_id: float(values["active_dpo_score"])
             for sample_id, values in active_dpo_components.items()
         }
+    if "gradient_dpo" in normalized_methods:
+        gradient_dpo_components = gradient_dpo_cheap_score_components(
+            source_rows,
+            id_field=id_field,
+        )
+        score_maps["gradient_dpo"] = {
+            sample_id: float(values["gradient_dpo_score"])
+            for sample_id, values in gradient_dpo_components.items()
+        }
 
     scored_rows: list[dict[str, Any]] = []
     for row in source_rows:
@@ -203,6 +270,8 @@ def build_preference_baseline_score_rows(
         scored_row["selector_scores"] = selector_scores
         if "active_dpo" in normalized_methods:
             scored_row.update(active_dpo_components[sample_id])
+        if "gradient_dpo" in normalized_methods:
+            scored_row.update(gradient_dpo_components[sample_id])
         for method, score in selector_scores.items():
             scored_row[f"{method}_score"] = score
         scored_rows.append(scored_row)
@@ -224,6 +293,8 @@ def _normalize_method(method: str) -> str:
         "apl": "apl",
         "active_dpo": "active_dpo",
         "activedpo": "active_dpo",
+        "gradient_dpo": "gradient_dpo",
+        "gradientdpo": "gradient_dpo",
     }
     if key not in aliases:
         raise ValueError(f"unsupported preference score method: {method!r}")

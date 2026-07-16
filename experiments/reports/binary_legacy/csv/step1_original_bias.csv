@@ -1,9 +1,0 @@
-dataset_query,model,n,gold_yes_pct,base_pred_yes_pct,base_macro_f1,base_bias,counter_bias_label,source
-IMDb q1 positive,Qwen3-0.6B,49990,49.99,99.99,33.35,yes,no,experiments/inputs/imdb/query_id_1/round_0/all_student_predictions.jsonl
-IMDb q2 negative,Qwen3-0.6B,49990,27.49,100.0,21.57,yes,no,experiments/inputs/imdb/query_id_2/round_0/all_student_predictions.jsonl
-TwitterHate,Qwen3-0.6B,17348,83.2,100.0,45.42,yes,no,experiments/inputs/twitter_hate/round_0/all_student_predictions.jsonl
-Codebase q1 social link,Qwen3-0.6B,9298,6.25,93.82,12.3,yes,no,experiments/inputs/codebase/query_id_1/round_0/full_all_student_predictions.jsonl
-Codebase q2 CS interest,Qwen3-0.6B,9298,61.95,99.45,39.6,yes,no,experiments/inputs/codebase/query_id_2/round_0/full_all_student_predictions.jsonl
-Codebase q3 factual ID,Qwen3-0.6B,9298,25.75,99.88,20.65,yes,no,experiments/inputs/codebase/query_id_3/round_0/full_all_student_predictions.jsonl
-FEVER support,Qwen3-0.6B,165447,52.4,10.01,44.08,no,yes,experiments/inputs/fever/round_0/all_student_predictions.jsonl
-FEVER support,Qwen3-1.7B reference,165447,52.4,58.94,86.72,near-balanced,,experiments/inputs/fever/qwen17b_round0_base/round_0/all_student_predictions.jsonl

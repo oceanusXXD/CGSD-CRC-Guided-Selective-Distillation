@@ -26,8 +26,8 @@ class DPORunPackValidationTest(unittest.TestCase):
         )
 
         self.assertTrue(report.is_ready)
-        self.assertEqual(12, report.expected_run_count)
-        self.assertEqual(12, report.completed_run_count)
+        self.assertEqual(6, report.expected_run_count)
+        self.assertEqual(6, report.completed_run_count)
         self.assertEqual([], report.issues)
         self.assertEqual(list(DPO_MAIN_METHODS), report.covered_methods)
 
@@ -36,7 +36,7 @@ class DPORunPackValidationTest(unittest.TestCase):
             _run_row(method=method, seed=seed)
             for seed in (1, 2)
             for method in DPO_MAIN_METHODS
-            if not (method == "ActiveDPO+DCMS" and seed == 2)
+            if not (method == "MIAS+DCMS" and seed == 2)
         ]
 
         report = validate_dpo_run_pack(
@@ -51,7 +51,7 @@ class DPORunPackValidationTest(unittest.TestCase):
         self.assertEqual(1, report.missing_run_count)
         self.assertIn("missing_run", {issue["code"] for issue in report.issues})
         self.assertIn(
-            "helpsteer2|qwen|100|2|ActiveDPO+DCMS",
+            "helpsteer2|qwen|100|2|MIAS+DCMS",
             {issue["run_key"] for issue in report.issues},
         )
 

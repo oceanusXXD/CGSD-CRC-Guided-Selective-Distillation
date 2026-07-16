@@ -7,6 +7,7 @@ from mias_dcms.preference_scoring import (
     active_dpo_scores,
     apl_scores,
     build_preference_baseline_score_rows,
+    gradient_dpo_cheap_score_components,
     reward_margin_scores,
 )
 
@@ -157,6 +158,35 @@ class PreferenceScoringTest(unittest.TestCase):
         self.assertEqual(
             by_id["ambiguous_cluster"]["active_dpo_score"],
             by_id["ambiguous_cluster"]["selector_scores"]["active_dpo"],
+        )
+
+    def test_gradient_dpo_cheap_score_uses_uncertainty_and_dpo_sensitivity(self) -> None:
+        components = gradient_dpo_cheap_score_components(
+            [
+                {
+                    "sample_id": "uncertain_sensitive",
+                    "probability_response_1": 0.5,
+                    "policy_logprob_gap": 0.0,
+                    "reference_logprob_gap": 0.0,
+                    "response_1_token_count": 2,
+                    "response_2_token_count": 3,
+                },
+                {
+                    "sample_id": "confident_shifted",
+                    "probability_response_1": 0.9,
+                    "policy_logprob_gap": 3.0,
+                    "reference_logprob_gap": 0.0,
+                    "response_1_token_count": 2,
+                    "response_2_token_count": 3,
+                },
+            ]
+        )
+
+        self.assertAlmostEqual(1.0, components["uncertain_sensitive"]["gradient_dpo_cheap_score"])
+        self.assertAlmostEqual(0.2 * 0.25, components["confident_shifted"]["gradient_dpo_cheap_score"])
+        self.assertGreater(
+            components["uncertain_sensitive"]["gradient_dpo_cheap_score"],
+            components["confident_shifted"]["gradient_dpo_cheap_score"],
         )
 
     def test_build_preference_baseline_score_rows_rejects_hidden_label_fields(self) -> None:

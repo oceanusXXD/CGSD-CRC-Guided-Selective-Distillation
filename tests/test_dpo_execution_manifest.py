@@ -182,6 +182,101 @@ class DPOExecutionManifestTest(unittest.TestCase):
         self.assertIn("heldout_pool_path", stage["inputs"])
         self.assertIn("heldout_logprobs_path", stage["outputs"])
 
+    def test_gradient_dpo_manifest_uses_direct_gradients_and_full_pool_targets(self) -> None:
+        rows = build_experiment_run_matrix(
+            datasets=["helpsteer2"],
+            models=["qwen-0.6b"],
+            budgets=[4],
+            seeds=[1],
+            methods=["GradientDPO", "GradientDPO+DCMS"],
+            artifact_root="experiments/runs/dpo_main",
+            training_config={
+                "initialization": "shared_seed_policy_v1",
+                "model_name_or_path": "qwen-0.6b",
+                "initial_policy_adapter_path": "experiments/inputs/preference/initial_policy_adapter",
+                "optimizer": "adamw",
+                "learning_rate": 5e-6,
+                "batch_size": 2,
+                "update_steps": 10,
+                "train_token_budget": 1000,
+                "data_accumulation": "cumulative",
+                "prompt_format": "chatml_pairwise_v1",
+                "generation_parameters": {"temperature": 0.0, "max_new_tokens": 64},
+            },
+            judge_config={
+                "judge_version": "fixed-human-labels-primary",
+                "judge_prompt_hash": "prompt-sha256",
+                "evaluator": "held_out_preference_labels",
+            },
+            data_config={
+                "active_pool_path": "experiments/inputs/preference/active_pool.jsonl",
+                "oracle_store_path": "experiments/inputs/preference/oracle_store.jsonl",
+                "logprobs_path": "experiments/inputs/preference/logprobs.jsonl",
+                "gradient_dpo_candidate_multiplier": 4,
+                "gradient_dpo_kappa": 0.1,
+            },
+        )
+
+        manifest = build_dpo_execution_manifest(rows)
+
+        base_commands = manifest["runs"][0]["stages"][0]["commands"]
+        dcms_commands = manifest["runs"][1]["stages"][0]["commands"]
+        self.assertIn("scripts/score_preference_gradients.py", base_commands[1])
+        self.assertIn("--candidate_multiplier 4", base_commands[1])
+        self.assertIn("scripts/select_preference_baseline.py", base_commands[2])
+        self.assertIn("--target_moments_path", dcms_commands[-1])
+        self.assertIn("gradient_target_moments.json", dcms_commands[-1])
+
+    def test_mias_manifest_changes_only_pretraining_selection(self) -> None:
+        rows = build_experiment_run_matrix(
+            datasets=["helpsteer2"],
+            models=["qwen-0.6b"],
+            budgets=[4],
+            seeds=[1],
+            methods=["MIAS", "MIAS+DCMS"],
+            artifact_root="experiments/runs/dpo_main",
+            training_config={
+                "initialization": "shared_seed_policy_v1",
+                "model_name_or_path": "qwen-0.6b",
+                "optimizer": "adamw",
+                "learning_rate": 5e-6,
+                "batch_size": 2,
+                "update_steps": 10,
+                "train_token_budget": 1000,
+                "data_accumulation": "cumulative",
+                "prompt_format": "chatml_pairwise_v1",
+                "generation_parameters": {"temperature": 0.0, "max_new_tokens": 64},
+            },
+            judge_config={
+                "judge_version": "fixed-human-labels-primary",
+                "judge_prompt_hash": "prompt-sha256",
+                "evaluator": "held_out_preference_labels",
+            },
+            data_config={
+                "active_pool_path": "experiments/inputs/preference/active_pool.jsonl",
+                "oracle_store_path": "experiments/inputs/preference/oracle_store.jsonl",
+                "logprobs_path": "experiments/inputs/preference/logprobs.jsonl",
+                "prompt_clusters_path": "experiments/inputs/preference/prompt_clusters.jsonl",
+                "mias_seed_rows_path": "experiments/inputs/preference/seed_rows.jsonl",
+                "mias_seed_features_path": "experiments/inputs/preference/seed_features.jsonl",
+                "mias_pool_features_path": "experiments/inputs/preference/pool_features.jsonl",
+                "mias_kappa": 0.1,
+            },
+        )
+
+        manifest = build_dpo_execution_manifest(rows)
+        base_selection = manifest["runs"][0]["stages"][0]
+        dcms_selection = manifest["runs"][1]["stages"][0]
+        self.assertIn("mias_seed_rows_path", base_selection["inputs"])
+        self.assertIn("scripts/select_mias.py", base_selection["commands"][0])
+        self.assertNotIn("--dcms", base_selection["commands"][0])
+        self.assertIn("--dcms", dcms_selection["commands"][0])
+        self.assertNotIn("scripts/score_preference_gradients.py", dcms_selection["commands"][0])
+        for run in manifest["runs"]:
+            training_command = run["stages"][2]["commands"][0]
+            self.assertIn("scripts/train_preference_dpo_run.py", training_command)
+            self.assertIn("train_token_budget", training_command)
+
 
 def _run_matrix() -> list[dict[str, object]]:
     return build_experiment_run_matrix(

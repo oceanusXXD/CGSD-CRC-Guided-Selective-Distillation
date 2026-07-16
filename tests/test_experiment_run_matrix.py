@@ -25,7 +25,7 @@ class ExperimentRunMatrixTest(unittest.TestCase):
             data_config={"split_manifest_path": "experiments/inputs/preference/split_manifest.json"},
         )
 
-        self.assertEqual(48, len(rows))
+        self.assertEqual(24, len(rows))
         first = rows[0]
         self.assertEqual(
             "helpsteer2__qwen-0_6b__budget100__seed1__random",

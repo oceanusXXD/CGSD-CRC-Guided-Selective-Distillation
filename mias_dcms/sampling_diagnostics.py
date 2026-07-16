@@ -12,6 +12,8 @@ from typing import Any, Mapping
 import numpy as np
 
 from mias_dcms.selection.dcms import rank_normalize_utilities, solve_dcms_with_slack
+from mias_dcms.selection.mias import select_mias_classification
+from mias_dcms.prompt_clusters import build_prompt_cluster_assignments
 from mias_dcms.selectors import (
     FORBIDDEN_SELECTOR_INPUT_FIELDS,
     assert_selector_rows_are_label_safe,
@@ -38,6 +40,10 @@ def select_rows(
         candidates.sort(key=lambda row: (-_entropy(_probabilities(row)), str(row["id"])))
     elif method == "margin":
         candidates.sort(key=lambda row: (_margin(_probabilities(row)), str(row["id"])))
+    elif method == "entropy_gradient":
+        candidates.sort(
+            key=lambda row: (-_classification_gradient_utility(row), str(row["id"]))
+        )
     elif method == "badge":
         return _select_badge(candidates, budget=budget, seed=seed)
     elif method == "galaxy":
@@ -53,9 +59,15 @@ def select_classification_rows(
     method: str,
     budget: int,
     seed: int,
-    dcms_target: str | Mapping[str, float] = "uniform",
+    dcms_target: str | Mapping[str, float] = "pool",
     dcms_slack_grid: Iterable[float] = DEFAULT_DCMS_SLACK_GRID,
     dcms_kappa: float = DEFAULT_DCMS_KAPPA,
+    candidate_multiplier: int = 4,
+    semantic_cluster_count: int | None = None,
+    mias_seed_rows: Iterable[Mapping[str, Any]] | None = None,
+    mias_label_field: str = "label",
+    mias_bootstrap_heads: int = 20,
+    mias_kappa: float = 0.1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Select classification rows and optionally apply a soft-posterior DCMS wrapper.
 
@@ -67,7 +79,70 @@ def select_classification_rows(
     candidates = [dict(row) for row in rows]
     assert_selector_rows_are_label_safe(candidates)
     normalized_method = _normalize_classification_method(method)
+    if candidate_multiplier <= 0:
+        raise ValueError("candidate_multiplier must be positive")
+    if normalized_method in {"mias", "mias_dcms"}:
+        if mias_seed_rows is None:
+            raise ValueError("MIAS classification selection requires mias_seed_rows")
+        result = select_mias_classification(
+            seed_rows=[dict(row) for row in mias_seed_rows],
+            candidate_rows=candidates,
+            budget=int(budget),
+            seed=int(seed),
+            use_dcms=normalized_method == "mias_dcms",
+            label_field=str(mias_label_field),
+            bootstrap_heads=int(mias_bootstrap_heads),
+            semantic_cluster_count=semantic_cluster_count,
+            slack_grid=tuple(float(value) for value in dcms_slack_grid),
+            kappa=float(mias_kappa),
+        )
+        rows_by_id = {str(row["id"]): row for row in candidates}
+        selected = [rows_by_id[sample_id] for sample_id in result.selected_ids]
+        metadata = result.summary_dict(method=normalized_method, budget=int(budget))
+        metadata.update(
+            {
+                "base_method": "mias",
+                "target": "pool",
+                "target_moments": dict(result.target_moments),
+                "stage1_candidate_count": len(candidates),
+                "candidate_multiplier": None,
+                "selected_ids": list(result.selected_ids),
+                "posterior_source": "calibrated_seed_surrogate",
+                "utility_normalization": "none",
+            }
+        )
+        if result.dcms is not None:
+            metadata.update(
+                {
+                    "q_propensity": dict(result.dcms.q_propensity),
+                    "selection_indicator": dict(result.dcms.selection_indicator),
+                    "continuous_moments": dict(result.dcms.continuous_moments),
+                    "rounded_moments": dict(result.dcms.rounded_moments),
+                    "robust_lower_moments": dict(result.dcms.robust_lower_moments),
+                    "robust_upper_moments": dict(result.dcms.robust_upper_moments),
+                    "utility_retained": float(result.dcms.utility_retained),
+                    "max_constraint_violation": float(result.dcms.max_constraint_violation),
+                    "selected_slack": result.dcms.selected_slack,
+                    "solver_status": result.dcms.solver_status,
+                    "rounding_seed": result.dcms.rounding_seed,
+                }
+            )
+        return selected, metadata
     if not normalized_method.endswith("_dcms"):
+        if normalized_method == "entropy_gradient":
+            stage_one_count = min(len(candidates), int(budget) * int(candidate_multiplier))
+            ranked = sorted(
+                candidates,
+                key=lambda row: (-_classification_gradient_utility(row), str(row["id"])),
+            )
+            return ranked[:stage_one_count][:budget], {
+                "method": normalized_method,
+                "base_method": normalized_method,
+                "budget": int(budget),
+                "stage1_candidate_count": stage_one_count,
+                "candidate_multiplier": int(candidate_multiplier),
+                "utility": "entropy_weighted_classifier_gradient_norm",
+            }
         return (
             select_rows(candidates, method=normalized_method, budget=budget, seed=seed),
             None,
@@ -83,9 +158,17 @@ def select_classification_rows(
         _classification_group_probabilities(row)
         for row in candidates
     ]
+    semantic_memberships, semantic_metadata = _classification_semantic_memberships(
+        candidates,
+        budget=budget,
+        cluster_count=semantic_cluster_count,
+    )
     memberships = [
-        {f"class={index}": probability for index, probability in enumerate(values)}
-        for values in probabilities
+        {
+            **{f"class={index}": probability for index, probability in enumerate(values)},
+            **semantic_membership,
+        }
+        for values, semantic_membership in zip(probabilities, semantic_memberships, strict=True)
     ]
     utilities = [
         _classification_dcms_utility(row, base_method)
@@ -94,11 +177,21 @@ def select_classification_rows(
     target_moments = _classification_target_moments(
         probabilities,
         target=dcms_target,
+        semantic_memberships=semantic_memberships,
     )
+    candidate_indexes = list(range(len(candidates)))
+    if base_method == "entropy_gradient":
+        candidate_count = min(len(candidates), int(budget) * int(candidate_multiplier))
+        candidate_indexes = sorted(
+            candidate_indexes,
+            key=lambda index: (-utilities[index], str(candidates[index]["id"])),
+        )[:candidate_count]
+    else:
+        candidate_count = len(candidate_indexes)
     result = solve_dcms_with_slack(
-        sample_ids=sample_ids,
-        utilities=rank_normalize_utilities(utilities),
-        group_membership=memberships,
+        sample_ids=[sample_ids[index] for index in candidate_indexes],
+        utilities=rank_normalize_utilities([utilities[index] for index in candidate_indexes]),
+        group_membership=[memberships[index] for index in candidate_indexes],
         budget=budget,
         target_moments=target_moments,
         slack_grid=tuple(float(value) for value in dcms_slack_grid),
@@ -107,6 +200,14 @@ def select_classification_rows(
     )
     rows_by_id = {str(row["id"]): row for row in candidates}
     selected = [rows_by_id[sample_id] for sample_id in result.selected_ids]
+    full_q_propensity = {
+        sample_id: float(result.q_propensity.get(sample_id, 0.0))
+        for sample_id in sample_ids
+    }
+    full_selection_indicator = {
+        sample_id: int(result.selection_indicator.get(sample_id, 0))
+        for sample_id in sample_ids
+    }
     metadata = {
         "method": normalized_method,
         "base_method": base_method,
@@ -118,9 +219,17 @@ def select_classification_rows(
             "cross_fitted_class_posterior" if has_cross_fitted_posterior else "probabilities_proxy"
         ),
         "utility_normalization": "rank",
+        "utility": (
+            "entropy_weighted_classifier_gradient_norm"
+            if base_method == "entropy_gradient"
+            else base_method
+        ),
+        "stage1_candidate_count": candidate_count,
+        "candidate_multiplier": int(candidate_multiplier) if base_method == "entropy_gradient" else None,
+        "semantic_coverage": semantic_metadata,
         "selected_ids": list(result.selected_ids),
-        "q_propensity": dict(result.q_propensity),
-        "selection_indicator": dict(result.selection_indicator),
+        "q_propensity": full_q_propensity,
+        "selection_indicator": full_selection_indicator,
         "continuous_moments": dict(result.continuous_moments),
         "rounded_moments": dict(result.rounded_moments),
         "robust_lower_moments": dict(result.robust_lower_moments),
@@ -156,6 +265,12 @@ def _normalize_classification_method(method: str) -> str:
         "galaxy": "galaxy",
         "entropy_dcms": "entropy_dcms",
         "badge_dcms": "badge_dcms",
+        "entropy_gradient": "entropy_gradient",
+        "entropygradient": "entropy_gradient",
+        "entropy_gradient_dcms": "entropy_gradient_dcms",
+        "entropygradient_dcms": "entropy_gradient_dcms",
+        "mias": "mias",
+        "mias_dcms": "mias_dcms",
     }
     if normalized not in aliases:
         raise ValueError(f"unsupported classification selection method: {method!r}")
@@ -168,6 +283,8 @@ def _classification_dcms_utility(row: Mapping[str, Any], method: str) -> float:
         return _entropy(probabilities)
     if method == "badge":
         return math.sqrt(sum(value * value for value in _badge_gradient_embedding(row)))
+    if method == "entropy_gradient":
+        return _classification_gradient_utility(row)
     raise ValueError(f"unsupported DCMS base method: {method!r}")
 
 
@@ -192,28 +309,107 @@ def _classification_target_moments(
     probabilities: list[list[float]],
     *,
     target: str | Mapping[str, float],
+    semantic_memberships: list[Mapping[str, float]] | None = None,
 ) -> dict[str, float]:
     if not probabilities:
         raise ValueError("probabilities must not be empty")
     class_count = len(probabilities[0])
     if any(len(values) != class_count for values in probabilities):
         raise ValueError("all probability rows must have the same class count")
+    normalized_target = str(target).strip().lower()
     if isinstance(target, Mapping):
         resolved = {str(key): float(value) for key, value in target.items()}
         expected = {f"class={index}" for index in range(class_count)}
         if set(resolved) != expected:
             raise ValueError("explicit DCMS target must cover every class exactly once")
-        return resolved
-    normalized_target = str(target).strip().lower()
-    if normalized_target == "uniform":
+        targets = resolved
+    elif normalized_target == "uniform":
         value = 1.0 / class_count
-        return {f"class={index}": value for index in range(class_count)}
-    if normalized_target == "pool":
-        return {
+        targets = {f"class={index}": value for index in range(class_count)}
+    elif normalized_target == "pool":
+        targets = {
             f"class={index}": mean(values[index] for values in probabilities)
             for index in range(class_count)
         }
-    raise ValueError(f"unsupported DCMS target: {target!r}")
+    else:
+        raise ValueError(f"unsupported DCMS target: {target!r}")
+    if semantic_memberships:
+        semantic_groups = sorted({group for membership in semantic_memberships for group in membership})
+        targets.update(
+            {
+                group: mean(float(membership.get(group, 0.0)) for membership in semantic_memberships)
+                for group in semantic_groups
+            }
+        )
+    return targets
+
+
+def _classification_gradient_utility(row: Mapping[str, Any]) -> float:
+    """Expected classifier-head gradient magnitude with an entropy weight."""
+    probabilities = _probabilities(dict(row))
+    representation = _raw_representation_embedding(row)
+    entropy = _entropy(probabilities)
+    residual_norm = math.sqrt(max(0.0, 1.0 - sum(value * value for value in probabilities)))
+    representation_norm = math.sqrt(sum(value * value for value in representation))
+    return entropy * residual_norm * representation_norm
+
+
+def _classification_semantic_memberships(
+    rows: list[dict[str, Any]],
+    *,
+    budget: int,
+    cluster_count: int | None,
+) -> tuple[list[dict[str, float]], dict[str, Any] | None]:
+    if not rows or not all(_has_representation_embedding(row) for row in rows):
+        return [{} for _ in rows], None
+    resolved_cluster_count = int(
+        cluster_count
+        if cluster_count is not None
+        else min(32, max(2, math.ceil(max(1, budget) / 4)))
+    )
+    resolved_cluster_count = min(len(rows), resolved_cluster_count)
+    embeddings_by_id = {
+        str(row["id"]): _representation_embedding(row)
+        for row in rows
+    }
+    assignments = build_prompt_cluster_assignments(
+        rows=rows,
+        embeddings_by_id=embeddings_by_id,
+        cluster_count=resolved_cluster_count,
+        id_field="id",
+    )
+    by_id = {str(row["id"]): row for row in assignments.rows}
+    memberships = [
+        {
+            f"semantic_cluster={cluster}": float(value)
+            for cluster, value in by_id[str(row["id"])]["prompt_cluster_membership"].items()
+        }
+        for row in rows
+    ]
+    return memberships, {
+        "source": "representation_embedding_kmeans",
+        "cluster_count": resolved_cluster_count,
+        "summary": assignments.summary,
+    }
+
+
+def _has_representation_embedding(row: Mapping[str, Any]) -> bool:
+    return row.get("representation_embedding", row.get("embedding")) is not None
+
+
+def _raw_representation_embedding(row: Mapping[str, Any]) -> list[float]:
+    value = row.get("representation_embedding", row.get("embedding"))
+    if not isinstance(value, (list, tuple)) or not value:
+        sample_id = row.get("id", row.get("sample_id", "<unknown>"))
+        raise ValueError(
+            f"{sample_id!r} is missing representation_embedding required by EntropyGradient"
+        )
+    vector = [float(item) for item in value]
+    if any(not math.isfinite(item) for item in vector):
+        raise ValueError("representation embeddings must be finite")
+    if math.sqrt(sum(item * item for item in vector)) <= 1e-12:
+        raise ValueError("representation embeddings must have non-zero norm")
+    return vector
 
 
 def _select_badge(

@@ -171,7 +171,7 @@ python scripts/benchmark_pipeline.py train-dpo \
   --dtype bfloat16
 ```
 
-Score `val.jsonl` with the base model and both adapter directories. Only after the measured classification and DPO shifts are available should PCSS be retained, modified with WSR, or replaced by a new objective.
+Score `val.jsonl` with the base model and both adapter directories. Only after the measured classification and DPO shifts are available should the DCMS objective be retained, modified, or replaced.
 
 ```bash
 python scripts/benchmark_pipeline.py compare-evaluations \

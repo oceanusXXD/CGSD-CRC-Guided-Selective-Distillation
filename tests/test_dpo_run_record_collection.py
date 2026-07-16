@@ -49,6 +49,8 @@ class DPORunRecordCollectionTest(unittest.TestCase):
                 "evaluation_label_count": 500,
                 "judge_calls": 500,
                 "selector_compute_seconds": 3.5,
+                "train_tokens": 4096,
+                "oracle_label_calls": 100,
             },
         }
 
@@ -67,6 +69,7 @@ class DPORunRecordCollectionTest(unittest.TestCase):
         self.assertEqual(100, record["cost_metrics"]["active_label_count"])
         self.assertEqual(100, record["cost_metrics"]["oracle_label_calls"])
         self.assertEqual(25, record["cost_metrics"]["seed_label_count"])
+        self.assertEqual(4096, record["cost_metrics"]["train_tokens"])
 
     def test_preserves_failed_and_incomplete_runs_as_visible_records(self) -> None:
         rows = _run_matrix(methods=["Random", "APL"])

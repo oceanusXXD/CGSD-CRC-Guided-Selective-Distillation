@@ -36,6 +36,14 @@ def build_preference_dcms_candidate_rows(
             "source_score_field": resolved_score_field,
             "groups": _groups(row, group_field=group_field, group_fields=group_fields),
         }
+        if normalized_method == "gradient_dpo":
+            candidate.update(
+                {
+                    key: value
+                    for key, value in row.items()
+                    if str(key).startswith("gradient_dpo_") and value is not None
+                }
+            )
         if selection_group_field:
             group_value = row.get(selection_group_field)
             if group_value is None or not str(group_value):
@@ -59,6 +67,8 @@ def _normalize_method(method: str) -> str:
         "apl": "apl",
         "active_dpo": "active_dpo",
         "activedpo": "active_dpo",
+        "gradient_dpo": "gradient_dpo",
+        "gradientdpo": "gradient_dpo",
     }
     if normalized not in aliases:
         raise ValueError(f"unsupported preference DCMS method: {method!r}")

@@ -38,6 +38,7 @@ from mias_dcms.sampling_diagnostics import (  # noqa: E402
     selector_safe_view,
     uncertainty_group_dependence_report,
 )
+from mias_dcms.selection.features import merge_feature_rows  # noqa: E402
 from mias_dcms.evaluation_comparison import compare_scored_models  # noqa: E402
 from mias_dcms.shift_gate import analyze_classification_shift, analyze_preference_shift  # noqa: E402
 
@@ -128,12 +129,22 @@ def parse_args() -> argparse.Namespace:
     classification_diagnostics.add_argument("--random-repetitions", type=int, default=1000)
     classification_diagnostics.add_argument("--dependence-permutations", type=int, default=999)
     classification_diagnostics.add_argument("--quantile-bins", type=int, default=10)
-    classification_diagnostics.add_argument("--dcms-target", choices=("uniform", "pool"), default="uniform")
+    classification_diagnostics.add_argument("--dcms-target", choices=("uniform", "pool"), default="pool")
     classification_diagnostics.add_argument(
         "--dcms-slack-grid",
         default="0,0.01,0.02,0.05,0.1,0.2,0.5",
     )
     classification_diagnostics.add_argument("--dcms-kappa", type=float, default=0.05)
+    classification_diagnostics.add_argument("--mias-kappa", type=float, default=0.1)
+    classification_diagnostics.add_argument("--candidate-multiplier", type=int, default=4)
+    classification_diagnostics.add_argument("--semantic-cluster-count", type=int)
+    classification_diagnostics.add_argument(
+        "--mias-seed-path",
+        type=Path,
+        help="Labeled seed JSONL with frozen representation_embedding fields, required by MIAS.",
+    )
+    classification_diagnostics.add_argument("--mias-seed-feature-path", type=Path)
+    classification_diagnostics.add_argument("--mias-candidate-feature-path", type=Path)
 
     preference_diagnostics = subparsers.add_parser("diagnose-preference")
     preference_diagnostics.add_argument("--scored-path", type=Path, required=True)
@@ -192,6 +203,12 @@ def main() -> None:
             dcms_target=args.dcms_target,
             dcms_slack_grid=_parse_nonnegative_floats(args.dcms_slack_grid),
             dcms_kappa=args.dcms_kappa,
+            mias_kappa=args.mias_kappa,
+            candidate_multiplier=args.candidate_multiplier,
+            semantic_cluster_count=args.semantic_cluster_count,
+            mias_seed_path=args.mias_seed_path,
+            mias_seed_feature_path=args.mias_seed_feature_path,
+            mias_candidate_feature_path=args.mias_candidate_feature_path,
         )
     elif args.command == "diagnose-preference":
         diagnose_preference(
@@ -816,11 +833,32 @@ def diagnose_classification(
     random_repetitions: int = 1000,
     dependence_permutations: int = 999,
     quantile_bins: int = 10,
-    dcms_target: str = "uniform",
+    dcms_target: str = "pool",
     dcms_slack_grid: list[float] | tuple[float, ...] = (0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5),
     dcms_kappa: float = 0.05,
+    mias_kappa: float = 0.1,
+    candidate_multiplier: int = 4,
+    semantic_cluster_count: int | None = None,
+    mias_seed_path: Path | None = None,
+    mias_seed_feature_path: Path | None = None,
+    mias_candidate_feature_path: Path | None = None,
 ) -> dict[str, Any]:
     rows = _read_jsonl(scored_path)
+    mias_seed_rows = _read_jsonl(mias_seed_path) if mias_seed_path is not None else None
+    if mias_candidate_feature_path is not None:
+        rows = merge_feature_rows(
+            rows,
+            _read_jsonl(mias_candidate_feature_path),
+            source_name=str(mias_candidate_feature_path),
+        )
+    if mias_seed_feature_path is not None:
+        if mias_seed_rows is None:
+            raise ValueError("--mias-seed-feature-path requires --mias-seed-path")
+        mias_seed_rows = merge_feature_rows(
+            mias_seed_rows,
+            _read_jsonl(mias_seed_feature_path),
+            source_name=str(mias_seed_feature_path),
+        )
     audit_rows = (
         _attach_classification_oracle(rows, _read_classification_oracle_store(oracle_store_path))
         if oracle_store_path is not None
@@ -874,6 +912,10 @@ def diagnose_classification(
                 dcms_target=dcms_target,
                 dcms_slack_grid=dcms_slack_grid,
                 dcms_kappa=dcms_kappa,
+                candidate_multiplier=candidate_multiplier,
+                semantic_cluster_count=semantic_cluster_count,
+                mias_seed_rows=mias_seed_rows,
+                mias_kappa=mias_kappa,
             )
         for budget in budgets:
             if cached_selection is None:
@@ -885,6 +927,10 @@ def diagnose_classification(
                     dcms_target=dcms_target,
                     dcms_slack_grid=dcms_slack_grid,
                     dcms_kappa=dcms_kappa,
+                    candidate_multiplier=candidate_multiplier,
+                    semantic_cluster_count=semantic_cluster_count,
+                    mias_seed_rows=mias_seed_rows,
+                    mias_kappa=mias_kappa,
                 )
             else:
                 selected_safe = cached_selection[:budget]
@@ -1114,10 +1160,26 @@ def _parse_methods(value: str) -> list[str]:
     aliases = {
         "entropy+dcms": "entropy_dcms",
         "badge+dcms": "badge_dcms",
+        "entropygradient+dcms": "entropy_gradient_dcms",
+        "entropy_gradient+dcms": "entropy_gradient_dcms",
+        "mias+dcms": "mias_dcms",
     }
     methods = [aliases.get(item.strip().lower(), item.strip().lower()) for item in value.split(",") if item.strip()]
     unsupported = sorted(
-        set(methods) - {"random", "entropy", "margin", "badge", "galaxy", "entropy_dcms", "badge_dcms"}
+        set(methods)
+        - {
+            "random",
+            "entropy",
+            "margin",
+            "badge",
+            "galaxy",
+            "entropy_dcms",
+            "badge_dcms",
+            "entropy_gradient",
+            "entropy_gradient_dcms",
+            "mias",
+            "mias_dcms",
+        }
     )
     if not methods or unsupported:
         raise ValueError(f"unsupported methods: {unsupported}")

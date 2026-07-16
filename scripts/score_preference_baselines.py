@@ -18,7 +18,7 @@ from mias_dcms.utils import read_jsonl, write_json, write_jsonl
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build selector-safe Reward Margin, APL, and ActiveDPO preference baseline scores."
+        description="Build selector-safe preference scores, including the GradientDPO first-stage score."
     )
     parser.add_argument("--input_path", type=Path, required=True)
     parser.add_argument("--output_path", type=Path, required=True)
@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--methods",
         default=",".join(SUPPORTED_PREFERENCE_SCORE_METHODS),
-        help="Comma-separated methods: reward_margin, apl, active_dpo.",
+        help="Comma-separated methods: reward_margin, apl, active_dpo, gradient_dpo.",
     )
     parser.add_argument("--prompt_entropy_weight", type=float, default=1.0)
     parser.add_argument(

@@ -199,6 +199,16 @@ def _completed_record_or_metric_issues(
         evaluation_label_count=int(cost_report.get("evaluation_label_count", 0)),
         judge_calls=int(cost_report.get("judge_calls", 0)),
         selector_compute_seconds=float(cost_report.get("selector_compute_seconds", 0.0)),
+        train_tokens=(
+            int(cost_report["train_tokens"])
+            if cost_report.get("train_tokens") is not None
+            else None
+        ),
+        oracle_label_calls=(
+            int(cost_report["oracle_label_calls"])
+            if cost_report.get("oracle_label_calls") is not None
+            else None
+        ),
     )
     record = run_record.as_dict()
     metric_issues = _metric_issues(
@@ -333,9 +343,17 @@ def _cost_metrics(cost_report: Any, *, selected_count: int, training_rows: list[
         "active_label_count": int(selected_count),
         "evaluation_label_count": int(report.get("evaluation_label_count", 0)),
         "judge_calls": int(report.get("judge_calls", 0)),
-        "train_tokens": estimate_preference_train_tokens(training_rows),
+        "train_tokens": int(
+            report["train_tokens"]
+            if report.get("train_tokens") is not None
+            else estimate_preference_train_tokens(training_rows)
+        ),
         "selector_compute_seconds": float(report.get("selector_compute_seconds", 0.0)),
-        "oracle_label_calls": int(selected_count),
+        "oracle_label_calls": int(
+            report["oracle_label_calls"]
+            if report.get("oracle_label_calls") is not None
+            else selected_count
+        ),
     }
 
 

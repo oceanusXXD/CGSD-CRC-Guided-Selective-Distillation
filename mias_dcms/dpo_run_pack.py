@@ -7,11 +7,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 DPO_MAIN_METHODS = (
     "Random",
-    "Reward Margin",
-    "APL",
-    "ActiveDPO",
-    "APL+DCMS",
-    "ActiveDPO+DCMS",
+    "MIAS",
+    "MIAS+DCMS",
 )
 
 REQUIRED_DPO_SELECTION_METRICS = (

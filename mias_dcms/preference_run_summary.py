@@ -38,6 +38,8 @@ def build_preference_run_record(
     evaluation_label_count: int = 0,
     judge_calls: int = 0,
     selector_compute_seconds: float = 0.0,
+    train_tokens: int | None = None,
+    oracle_label_calls: int | None = None,
 ) -> RunRecord:
     selected_count = int(selection_summary.get("selected_count", budget))
     if selected_count != int(budget):
@@ -62,9 +64,17 @@ def build_preference_run_record(
         "active_label_count": revealed_count,
         "evaluation_label_count": int(evaluation_label_count),
         "judge_calls": int(judge_calls),
-        "train_tokens": estimate_preference_train_tokens(train_rows),
+        "train_tokens": (
+            int(train_tokens)
+            if train_tokens is not None
+            else estimate_preference_train_tokens(train_rows)
+        ),
         "selector_compute_seconds": float(selector_compute_seconds),
-        "oracle_label_calls": revealed_count,
+        "oracle_label_calls": (
+            int(oracle_label_calls)
+            if oracle_label_calls is not None
+            else revealed_count
+        ),
     }
 
     return RunRecord(
